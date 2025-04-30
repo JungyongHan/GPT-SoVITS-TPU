@@ -16,7 +16,11 @@ opt_dir = os.environ.get("opt_dir")
 cnhubert.cnhubert_base_path = os.environ.get("cnhubert_base_dir")
 import torch
 
-is_half = eval(os.environ.get("is_half", "True")) and torch.cuda.is_available()
+# TPU 지원 추가
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from GPT_SoVITS.utils_tpu import is_tpu_available, get_device_type, get_xla_device, move_to_device
+
+is_half = eval(os.environ.get("is_half", "True")) and torch.cuda.is_available() and not is_tpu_available()
 
 import traceback
 import numpy as np
@@ -59,15 +63,23 @@ os.makedirs(wav32dir, exist_ok=True)
 
 maxx = 0.95
 alpha = 0.5
-if torch.cuda.is_available():
+
+# 디바이스 감지 로직 개선 (TPU 지원 추가)
+device_type = get_device_type()
+if device_type == "tpu":
+    device = get_xla_device()
+    print("TPU 디바이스를 사용합니다.")
+elif torch.cuda.is_available():
     device = "cuda:0"
-# elif torch.backends.mps.is_available():
-#     device = "mps"
+    print("CUDA 디바이스를 사용합니다.")
 else:
     device = "cpu"
+    print("CPU 디바이스를 사용합니다.")
+
 model = cnhubert.get_model()
-# is_half=False
-if is_half == True:
+
+# TPU에서는 half precision을 사용하지 않음
+if is_half == True and device_type != "tpu":
     model = model.half().to(device)
 else:
     model = model.to(device)

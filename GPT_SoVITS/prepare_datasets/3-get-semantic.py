@@ -1,3 +1,4 @@
+import sys
 import os
 
 inp_text = os.environ.get("inp_text")
@@ -28,7 +29,11 @@ else:
     version = "v3"
 import torch
 
-is_half = eval(os.environ.get("is_half", "True")) and torch.cuda.is_available()
+# TPU 지원 추가
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from GPT_SoVITS.utils_tpu import is_tpu_available, get_device_type, get_xla_device, move_to_device
+
+is_half = eval(os.environ.get("is_half", "True")) and torch.cuda.is_available() and not is_tpu_available()
 import traceback
 import sys
 
@@ -59,12 +64,17 @@ semantic_path = "%s/6-name2semantic-%s.tsv" % (opt_dir, i_part)
 if os.path.exists(semantic_path) == False:
     os.makedirs(opt_dir, exist_ok=True)
 
-    if torch.cuda.is_available():
+    # 디바이스 감지 로직 개선 (TPU 지원 추가)
+    device_type = get_device_type()
+    if device_type == "tpu":
+        device = get_xla_device()
+        print("TPU 디바이스를 사용합니다.")
+    elif torch.cuda.is_available():
         device = "cuda"
-    # elif torch.backends.mps.is_available():
-    #     device = "mps"
+        print("CUDA 디바이스를 사용합니다.")
     else:
         device = "cpu"
+        print("CPU 디바이스를 사용합니다.")
     hps = utils.get_hparams_from_file(s2config_path)
     vq_model = SynthesizerTrn(
         hps.data.filter_length // 2 + 1,
@@ -73,7 +83,8 @@ if os.path.exists(semantic_path) == False:
         version=version,
         **hps.model,
     )
-    if is_half == True:
+    # TPU에서는 half precision을 사용하지 않음
+    if is_half == True and device_type != "tpu":
         vq_model = vq_model.half().to(device)
     else:
         vq_model = vq_model.to(device)
@@ -91,7 +102,8 @@ if os.path.exists(semantic_path) == False:
         if os.path.exists(hubert_path) == False:
             return
         ssl_content = torch.load(hubert_path, map_location="cpu")
-        if is_half == True:
+        # TPU에서는 half precision을 사용하지 않음
+        if is_half == True and device_type != "tpu":
             ssl_content = ssl_content.half().to(device)
         else:
             ssl_content = ssl_content.to(device)

@@ -17,6 +17,11 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger  # WandbLogger
 from pytorch_lightning.strategies import DDPStrategy
 
+# TPU 지원 추가
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from GPT_SoVITS.utils_tpu import is_tpu_available, setup_tpu, get_device_type
+
 logging.getLogger("numba").setLevel(logging.WARNING)
 logging.getLogger("matplotlib").setLevel(logging.WARNING)
 torch.set_float32_matmul_precision("high")
@@ -108,17 +113,27 @@ def main(args):
     logger = TensorBoardLogger(name=output_dir.stem, save_dir=output_dir)
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["USE_LIBUV"] = "0"
+    # 디바이스 유형 확인 (TPU, GPU, CPU)
+    device_type = get_device_type()
+    
+    # TPU 환경 설정
+    tpu_env = None
+    if device_type == "tpu":
+        tpu_env = setup_tpu()
+        if tpu_env is not None:
+            logging.info("TPU를 사용하여 학습합니다.")
+    
     trainer: Trainer = Trainer(
         max_epochs=config["train"]["epochs"],
-        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        accelerator=device_type,  # tpu, gpu 또는 cpu
         # val_check_interval=9999999999999999999999,###不要验证
         # check_val_every_n_epoch=None,
         limit_val_batches=0,
-        devices=-1 if torch.cuda.is_available() else 1,
+        devices=-1 if device_type in ["tpu", "cuda"] else 1,
         benchmark=False,
         fast_dev_run=False,
         strategy=DDPStrategy(process_group_backend="nccl" if platform.system() != "Windows" else "gloo")
-        if torch.cuda.is_available()
+        if torch.cuda.is_available() and not is_tpu_available()
         else "auto",
         precision=config["train"]["precision"],
         logger=logger,

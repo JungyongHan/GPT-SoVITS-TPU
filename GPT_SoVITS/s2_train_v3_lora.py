@@ -7,6 +7,11 @@ import utils
 
 hps = utils.get_hparams(stage=2)
 os.environ["CUDA_VISIBLE_DEVICES"] = hps.train.gpu_numbers.replace("-", ",")
+
+# TPU 지원 추가
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from GPT_SoVITS.utils_tpu import is_tpu_available, setup_tpu, get_device_type, get_xla_device, move_to_device, create_parallel_loader
 import logging
 
 import torch
@@ -48,10 +53,28 @@ torch.set_float32_matmul_precision("medium")  # 最低精度但最快（也就�
 # from config import pretrained_s2G,pretrained_s2D
 global_step = 0
 
-device = "cpu"  # cuda以外的设备，等mps优化后加入
+# 디바이스 설정
+device_type = get_device_type()
+if device_type == "tpu":
+    device = get_xla_device()
+    if device is not None:
+        print("TPU 디바이스를 사용합니다.")
+else:
+    device = "cpu"  # cuda以外的设备，等mps优化后加入
 
 
 def main():
+    # TPU 또는 GPU 설정
+    if is_tpu_available():
+        # TPU 환경 설정
+        tpu_env = setup_tpu()
+        if tpu_env is not None:
+            xmp = tpu_env['xmp']
+            # TPU용 멀티프로세싱 실행
+            xmp.spawn(run, args=(8, hps), nprocs=8)  # TPU v2/v3는 일반적으로 8개 코어
+            return
+    
+    # GPU 또는 CPU 설정
     if torch.cuda.is_available():
         n_gpus = torch.cuda.device_count()
     else:
@@ -78,15 +101,25 @@ def run(rank, n_gpus, hps):
         writer = SummaryWriter(log_dir=hps.s2_ckpt_dir)
         writer_eval = SummaryWriter(log_dir=os.path.join(hps.s2_ckpt_dir, "eval"))
 
-    dist.init_process_group(
-        backend="gloo" if os.name == "nt" or not torch.cuda.is_available() else "nccl",
-        init_method="env://?use_libuv=False",
-        world_size=n_gpus,
-        rank=rank,
-    )
+    # TPU 환경인 경우 분산 설정 건너뛰기 (XLA가 처리)
+    if not is_tpu_available():
+        dist.init_process_group(
+            backend="gloo" if os.name == "nt" or not torch.cuda.is_available() else "nccl",
+            init_method="env://?use_libuv=False",
+            world_size=n_gpus,
+            rank=rank,
+        )
+    
     torch.manual_seed(hps.train.seed)
-    if torch.cuda.is_available():
+    
+    # 디바이스 설정
+    if is_tpu_available():
+        # TPU는 XLA가 자동으로 처리
+        import torch_xla.core.xla_model as xm
+        device = xm.xla_device()
+    elif torch.cuda.is_available():
         torch.cuda.set_device(rank)
+        device = f"cuda:{rank}"
 
     TextAudioSpeakerLoader=TextAudioSpeakerLoaderV3 if hps.model.version=="v3"else TextAudioSpeakerLoaderV4
     TextAudioSpeakerCollate=TextAudioSpeakerCollateV3 if hps.model.version=="v3"else TextAudioSpeakerCollateV4
@@ -119,6 +152,7 @@ def run(rank, n_gpus, hps):
         shuffle=True,
     )
     collate_fn = TextAudioSpeakerCollate()
+    # 데이터 로더 생성
     train_loader = DataLoader(
         train_dataset,
         num_workers=6,
@@ -129,6 +163,11 @@ def run(rank, n_gpus, hps):
         persistent_workers=True,
         prefetch_factor=4,
     )
+    
+    # TPU용 병렬 로더 생성
+    if is_tpu_available():
+        import torch_xla.distributed.parallel_loader as pl
+        train_loader = pl.MpDeviceLoader(train_loader, device)
     save_root = "%s/logs_s2_%s_lora_%s" % (hps.data.exp_dir, hps.model.version, hps.train.lora_rank)
     os.makedirs(save_root, exist_ok=True)
     lora_rank = int(hps.train.lora_rank)
@@ -156,7 +195,11 @@ def run(rank, n_gpus, hps):
         )
 
     def model2cuda(net_g, rank):
-        if torch.cuda.is_available():
+        # 모델을 적절한 디바이스로 이동
+        if is_tpu_available():
+            # TPU는 DDP 대신 XLA의 자체 병렬 처리 사용
+            net_g = net_g.to(device)
+        elif torch.cuda.is_available():
             net_g = DDP(net_g.cuda(rank), device_ids=[rank], find_unused_parameters=True)
         else:
             net_g = net_g.to(device)
@@ -261,36 +304,12 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     for batch_idx, (ssl, spec, mel, ssl_lengths, spec_lengths, text, text_lengths, mel_lengths) in enumerate(
         tqdm(train_loader)
     ):
-        if torch.cuda.is_available():
-            spec, spec_lengths = (
-                spec.cuda(
-                    rank,
-                    non_blocking=True,
-                ),
-                spec_lengths.cuda(
-                    rank,
-                    non_blocking=True,
-                ),
-            )
-            mel, mel_lengths = mel.cuda(rank, non_blocking=True), mel_lengths.cuda(rank, non_blocking=True)
-            ssl = ssl.cuda(rank, non_blocking=True)
-            ssl.requires_grad = False
-            text, text_lengths = (
-                text.cuda(
-                    rank,
-                    non_blocking=True,
-                ),
-                text_lengths.cuda(
-                    rank,
-                    non_blocking=True,
-                ),
-            )
-        else:
-            spec, spec_lengths = spec.to(device), spec_lengths.to(device)
-            mel, mel_lengths = mel.to(device), mel_lengths.to(device)
-            ssl = ssl.to(device)
-            ssl.requires_grad = False
-            text, text_lengths = text.to(device), text_lengths.to(device)
+        # 데이터를 적절한 디바이스로 이동
+        spec, spec_lengths = spec.to(device, non_blocking=True), spec_lengths.to(device, non_blocking=True)
+        mel, mel_lengths = mel.to(device, non_blocking=True), mel_lengths.to(device, non_blocking=True)
+        ssl = ssl.to(device, non_blocking=True)
+        ssl.requires_grad = False
+        text, text_lengths = text.to(device, non_blocking=True), text_lengths.to(device, non_blocking=True)
 
         with autocast(enabled=hps.train.fp16_run):
             cfm_loss = net_g(
@@ -311,6 +330,11 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
         scaler.step(optim_g)
         scaler.update()
+        
+        # TPU 동기화
+        if is_tpu_available():
+            import torch_xla.core.xla_model as xm
+            xm.mark_step()
 
         if rank == 0:
             if global_step % hps.train.log_interval == 0:

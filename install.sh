@@ -180,8 +180,19 @@ if [ "$USE_CUDA" = false ]; then
         USE_ROCM=false
     fi
 fi
+echo "Checking for TPU installation..."
+if [[ -n "$COLAB_TPU_ADDR" ]] || [[ -d "/usr/share/tpu" ]] || [[ -n "$TPU_NAME" ]]; then
+    USE_TPU=true
+    echo "TPU environment detected."
+else
+    USE_TPU=false
+fi
 
-if [ "$USE_CUDA" = true ]; then
+if [ "$USE_TPU" = true ]; then
+    echo "Installing PyTorch/XLA for TPU support..."
+    pip install torch==2.5.1 torchaudio==2.5.1
+    pip install torch_xla[tpu] -f https://storage.googleapis.com/libtpu-releases/index.html
+elif [ "$USE_CUDA" = true ]; then
     echo "Installing PyTorch with CUDA support..."
     pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 elif [ "$USE_ROCM" = true ]; then

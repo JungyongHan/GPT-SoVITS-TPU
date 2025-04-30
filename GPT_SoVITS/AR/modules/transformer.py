@@ -1,6 +1,8 @@
 # modified from https://github.com/lifeiteng/vall-e/blob/main/valle/modules/transformer.py
 import copy
 import numbers
+import os
+import sys
 from functools import partial
 from typing import Any
 from typing import Callable
@@ -15,6 +17,10 @@ from AR.modules.scaling import BalancedDoubleSwish
 from torch import nn
 from torch import Tensor
 from torch.nn import functional as F
+
+# TPU 지원을 위한 유틸리티 함수 가져오기
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from utils_tpu import is_tpu_available, get_xla_device, move_to_device, get_device_type
 
 _shape_t = Union[int, List[int], torch.Size]
 

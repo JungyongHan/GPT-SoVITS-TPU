@@ -15,12 +15,18 @@
 # limitations under the License.
 import contextlib
 import logging
+import os
+import sys
 from collections import defaultdict
 from typing import List, Tuple
 
 import torch
 from torch import Tensor
 from torch.optim import Optimizer
+
+# TPU 지원을 위한 유틸리티 함수 가져오기
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from utils_tpu import is_tpu_available, get_xla_device, move_to_device
 
 
 class BatchedOptimizer(Optimizer):
@@ -116,7 +122,8 @@ class ScaledAdam(BatchedOptimizer):
      proportional to the norm of that parameter; and also learn the scale of the parameter,
      in log space, subject to upper and lower limits (as if we had factored each parameter as
      param = underlying_param * log_scale.exp())
-
+     
+     TPU 지원이 추가되었습니다.
 
      Args:
           params:  The parameters or param_groups to optimize (like other Optimizer subclasses)
@@ -172,6 +179,17 @@ class ScaledAdam(BatchedOptimizer):
         assert parameters_names is not None, (
             "Please prepare parameters_names,which is a List[List[str]]. Each List[str] is for a groupand each str is for a parameter"
         )
+        
+        # TPU 환경 확인
+        self.is_tpu = is_tpu_available()
+        if self.is_tpu:
+            logging.info("TPU 환경에서 ScaledAdam 옵티마이저를 초기화합니다.")
+            self.device = get_xla_device()
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
+            
         defaults = dict(
             lr=lr,
             clipping_scale=clipping_scale,
@@ -205,6 +223,11 @@ class ScaledAdam(BatchedOptimizer):
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
+                
+        # TPU 환경에서는 특별한 처리가 필요할 수 있음
+        if self.is_tpu:
+            import torch_xla.core.xla_model as xm
+            logging.debug("TPU 환경에서 ScaledAdam 옵티마이저 step을 실행합니다.")
 
         batch = True
 
@@ -231,6 +254,11 @@ class ScaledAdam(BatchedOptimizer):
 
                     self._step_one_batch(group, p, state, clipping_scale)
 
+        # TPU 환경에서는 연산 완료 후 명시적으로 동기화
+        if self.is_tpu:
+            import torch_xla.core.xla_model as xm
+            xm.mark_step()
+            
         return loss
 
     def _init_state(self, group: dict, p: Tensor, state: dict):

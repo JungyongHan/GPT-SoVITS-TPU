@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import sys
 import os
 
 inp_text = os.environ.get("inp_text")
@@ -13,7 +14,11 @@ opt_dir = os.environ.get("opt_dir")
 bert_pretrained_dir = os.environ.get("bert_pretrained_dir")
 import torch
 
-is_half = eval(os.environ.get("is_half", "True")) and torch.cuda.is_available()
+# TPU 지원 추가
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from GPT_SoVITS.utils_tpu import is_tpu_available, get_device_type, get_xla_device, move_to_device
+
+is_half = eval(os.environ.get("is_half", "True")) and torch.cuda.is_available() and not is_tpu_available()
 version = os.environ.get("version", None)
 import traceback
 import os.path
@@ -48,19 +53,25 @@ if os.path.exists(txt_path) == False:
     bert_dir = "%s/3-bert" % (opt_dir)
     os.makedirs(opt_dir, exist_ok=True)
     os.makedirs(bert_dir, exist_ok=True)
-    if torch.cuda.is_available():
+    # 디바이스 감지 로직 개선 (TPU 지원 추가)
+    device_type = get_device_type()
+    if device_type == "tpu":
+        device = get_xla_device()
+        print("TPU 디바이스를 사용합니다.")
+    elif torch.cuda.is_available():
         device = "cuda:0"
-    # elif torch.backends.mps.is_available():
-    #     device = "mps"
+        print("CUDA 디바이스를 사용합니다.")
     else:
         device = "cpu"
+        print("CPU 디바이스를 사용합니다.")
     if os.path.exists(bert_pretrained_dir):
         ...
     else:
         raise FileNotFoundError(bert_pretrained_dir)
     tokenizer = AutoTokenizer.from_pretrained(bert_pretrained_dir)
     bert_model = AutoModelForMaskedLM.from_pretrained(bert_pretrained_dir)
-    if is_half == True:
+    # TPU에서는 half precision을 사용하지 않음
+    if is_half == True and device_type != "tpu":
         bert_model = bert_model.half().to(device)
     else:
         bert_model = bert_model.to(device)
