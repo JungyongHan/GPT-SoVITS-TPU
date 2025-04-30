@@ -181,12 +181,14 @@ if [ "$USE_CUDA" = false ]; then
     fi
 fi
 echo "Checking for TPU installation..."
-if [[ -n "$COLAB_TPU_ADDR" ]] || [[ -d "/usr/share/tpu" ]] || [[ -n "$TPU_NAME" ]]; then
+if [[ -n "$TPU_NAME" ]] || [[ -d "/usr/share/tpu" ]] || [[ "$PJRT_DEVICE" == "TPU" ]]; then
+    echo "TPU detected"
     USE_TPU=true
-    echo "TPU environment detected."
 else
+    echo "TPU not found"
     USE_TPU=false
 fi
+
 
 if [ "$USE_TPU" = true ]; then
     echo "Installing PyTorch/XLA for TPU support..."
