@@ -70,3 +70,10 @@ def create_parallel_loader(dataloader, device):
     
     import torch_xla.distributed.parallel_loader as pl
     return pl.ParallelLoader(dataloader, [device]).per_device_loader(device)
+
+
+if __name__ == "__main__":
+    print(f"TPU 사용 가능 여부: {is_tpu_available()}")
+    print(f"사용 가능한 디바이스 유형: {get_device_type()}")
+    print(f"XLA 디바이스: {get_xla_device()}")
+    
