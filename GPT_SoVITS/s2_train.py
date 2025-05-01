@@ -384,7 +384,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     ) in enumerate(tqdm(train_loader)):
         # 데이터를 적절한 디바이스로 이동
         if is_tpu_available():
-            from GPT_SoVITS.utils_tpu import move_to_device        
+            from GPT_SoVITS.utils_tpu import move_to_device,get_xla_device
+            device = get_xla_device()
             spec = move_to_device(spec, device)
             spec_lengths = move_to_device(spec_lengths, device)
             y = move_to_device(y, device)
