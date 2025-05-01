@@ -113,6 +113,8 @@ def run(rank, n_gpus, hps):
         # TPU는 XLA가 자동으로 처리
         import torch_xla.core.xla_model as xm
         device = xm.xla_device()
+        rank = xm.get_ordinal()
+        print("TPU 디바이스를 사용합니다.")
     elif torch.cuda.is_available():
         torch.cuda.set_device(rank)
         device = f"cuda:{rank}"
