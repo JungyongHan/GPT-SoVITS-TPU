@@ -67,7 +67,7 @@ def main():
             # TPU 코어 수 확인
             from GPT_SoVITS.utils_tpu import get_tpu_cores_count
             num_cores = get_tpu_cores_count()
-            logging.info(f"사용 가능한 TPU 코어 수: {num_cores}")
+            print(f"사용 가능한 TPU 코어 수: {num_cores}")
             # TPU용 멀티프로세싱 실행 (코어 수에 맞게 설정)
             xmp.spawn(run, args=(num_cores, hps), nprocs=num_cores)
             return
@@ -105,6 +105,8 @@ def run(rank, n_gpus, hps):
             world_size=n_gpus,
             rank=rank,
         )
+    else:
+        dist.init_process_group('xla', init_method='xla://')
     
     torch.manual_seed(hps.train.seed)
     
@@ -114,7 +116,8 @@ def run(rank, n_gpus, hps):
         import torch_xla.core.xla_model as xm
         device = xm.xla_device()
         rank = xm.get_ordinal()
-        print("TPU 디바이스를 사용합니다.")
+        print(f"My device: {device}, My rank: {rank}")
+
     elif torch.cuda.is_available():
         torch.cuda.set_device(rank)
         device = f"cuda:{rank}"
