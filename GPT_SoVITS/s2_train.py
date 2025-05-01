@@ -234,10 +234,8 @@ def run(rank, n_gpus, hps):
         eps=hps.train.eps,
     )
     # 분산 학습 설정
-    if is_tpu_available():
-        # TPU는 DDP 대신 XLA의 자체 병렬 처리 사용
-        pass
-    elif torch.cuda.is_available():
+  
+    if is_tpu_available() or torch.cuda.is_available():
         net_g = DDP(net_g, device_ids=[rank], find_unused_parameters=True)
         net_d = DDP(net_d, device_ids=[rank], find_unused_parameters=True)
 
