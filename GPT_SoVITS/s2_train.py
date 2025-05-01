@@ -352,11 +352,11 @@ def run(rank, n_gpus, hps):
         scheduler_d.step()
     print("training done")
 
-def set_loader_epoch(train_loader, epoch):
-    if hasattr(train_loader, "loader"):
-        train_loader.loader.batch_sampler.set_epoch(epoch)
-    else:
-        train_loader.batch_sampler.set_epoch(epoch)
+def set_loader_epoch(loader, epoch):
+    if hasattr(loader, "batch_sampler") and hasattr(loader.batch_sampler, "set_epoch"):
+        loader.batch_sampler.set_epoch(epoch)
+    elif hasattr(loader, "_loader") and hasattr(loader._loader, "batch_sampler") and hasattr(loader._loader.batch_sampler, "set_epoch"):
+        loader._loader.batch_sampler.set_epoch(epoch)
 
 def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loaders, logger, writers):
     net_g, net_d = nets
@@ -367,7 +367,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         writer, writer_eval = writers
 
 
-    set_loader_epoch(train_loader, epoch)
+    train_loader.batch_sampler.set_epoch(epoch)
     global global_step
 
     net_g.train()
