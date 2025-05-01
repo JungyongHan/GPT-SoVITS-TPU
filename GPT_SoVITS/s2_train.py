@@ -367,7 +367,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         writer, writer_eval = writers
 
 
-    train_loader.batch_sampler.set_epoch(epoch)
+    set_loader_epoch(train_loader, epoch)
     global global_step
 
     net_g.train()
