@@ -53,13 +53,8 @@ torch.set_float32_matmul_precision("medium")  # 最低精度但最快（也就�
 global_step = 0
 
 # 디바이스 설정
-device_type = get_device_type()
-if device_type == "tpu":
-    device = get_xla_device()
-    if device is not None:
-        print("TPU 디바이스를 사용합니다.")
-else:
-    device = "cpu"  # cuda以外的设备，等mps优化后加入
+
+device = "cpu"  # cuda以外的设备，等mps优化后加入
 
 
 def main():
