@@ -11,7 +11,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = hps.train.gpu_numbers.replace("-", ",")
 # TPU 지원 추가
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from GPT_SoVITS.utils_tpu import is_tpu_available, setup_tpu, get_device_type, get_xla_device, move_to_device, create_parallel_loader
+from GPT_SoVITS.utils_tpu import is_tpu_available, setup_tpu, get_device_type, get_xla_device, move_to_device, create_parallel_loader, setup_tpu_slicing
 import logging
 
 import torch

@@ -20,7 +20,7 @@ from pytorch_lightning.strategies import DDPStrategy
 # TPU 지원 추가
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from GPT_SoVITS.utils_tpu import is_tpu_available, setup_tpu, get_device_type
+from GPT_SoVITS.utils_tpu import is_tpu_available, setup_tpu, get_device_type, setup_tpu_slicing
 
 logging.getLogger("numba").setLevel(logging.WARNING)
 logging.getLogger("matplotlib").setLevel(logging.WARNING)
