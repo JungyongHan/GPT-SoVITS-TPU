@@ -2,7 +2,7 @@ import warnings
 
 warnings.filterwarnings("ignore")
 import os
-
+import math
 import utils
 
 hps = utils.get_hparams(stage=2)
@@ -115,7 +115,7 @@ def run(rank, n_gpus, hps):
         # TPU는 XLA가 자동으로 처리
         import torch_xla.core.xla_model as xm
         device = xm.xla_device()
-        rank = xm.get_ordinal()/n_gpus
+        rank = math.trunc(xm.get_ordinal()/n_gpus)
         print(f"My device: {device}, My rank: {rank}")
 
     elif torch.cuda.is_available():
