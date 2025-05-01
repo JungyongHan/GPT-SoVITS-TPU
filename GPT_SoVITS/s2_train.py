@@ -65,12 +65,15 @@ else:
 def main():
     # TPU 또는 GPU 설정
     if is_tpu_available():
-        # TPU 환경 설정
-        tpu_env = setup_tpu()
+        # TPU 환경 설정 (슬라이싱 지원)
+        tpu_env = setup_tpu_slicing()
         if tpu_env is not None:
             xmp = tpu_env['xmp']
-            # TPU용 멀티프로세싱 실행
-            xmp.spawn(run, args=(8, hps), nprocs=8)  # TPU v2/v3는 일반적으로 8개 코어
+            # TPU 코어 수 확인
+            num_cores = get_tpu_cores_count()
+            logging.info(f"사용 가능한 TPU 코어 수: {num_cores}")
+            # TPU용 멀티프로세싱 실행 (코어 수에 맞게 설정)
+            xmp.spawn(run, args=(num_cores, hps), nprocs=num_cores)
             return
     
     # GPU 또는 CPU 설정
@@ -161,10 +164,11 @@ def run(rank, n_gpus, hps):
         prefetch_factor=4,
     )
     
-    # TPU용 병렬 로더 생성
+    # TPU용 병렬 로더 생성 (슬라이싱 환경에 최적화)
     if is_tpu_available():
-        import torch_xla.distributed.parallel_loader as pl
-        train_loader = pl.MpDeviceLoader(train_loader, device)
+        logging.info("TPU 슬라이싱 환경에 최적화된 데이터 로더를 설정합니다.")
+        # 개선된 병렬 로더 함수 사용
+        train_loader = create_parallel_loader(train_loader, device)
     # if rank == 0:
     #     eval_dataset = TextAudioSpeakerLoader(hps.data.validation_files, hps.data, val=True)
     #     eval_loader = DataLoader(eval_dataset, num_workers=0, shuffle=False,
@@ -442,10 +446,9 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         scaler.step(optim_g)
         scaler.update()
         
-        # TPU 동기화
+        # TPU 코어 간 동기화
         if is_tpu_available():
-            import torch_xla.core.xla_model as xm
-            xm.mark_step()
+            sync_tpu_cores()  # 개선된 TPU 동기화 함수 사용
 
         if rank == 0:
             if global_step % hps.train.log_interval == 0:

@@ -64,11 +64,18 @@ semantic_path = "%s/6-name2semantic-%s.tsv" % (opt_dir, i_part)
 if os.path.exists(semantic_path) == False:
     os.makedirs(opt_dir, exist_ok=True)
 
-    # 디바이스 감지 로직 개선 (TPU 지원 추가)
+    # 디바이스 감지 로직 개선 (TPU 슬라이싱 지원 추가)
     device_type = get_device_type()
     if device_type == "tpu":
+        # TPU 슬라이싱 환경 설정
+        tpu_env = setup_tpu_slicing()
         device = get_xla_device()
-        print("TPU 디바이스를 사용합니다.")
+        if tpu_env is not None:
+            # TPU 코어 수 확인
+            num_cores = get_tpu_cores_count()
+            print(f"TPU 슬라이싱 환경에서 {num_cores}개의 코어를 사용합니다.")
+        else:
+            print("TPU 디바이스를 사용합니다.")
     elif torch.cuda.is_available():
         device = "cuda"
         print("CUDA 디바이스를 사용합니다.")
@@ -107,6 +114,10 @@ if os.path.exists(semantic_path) == False:
             ssl_content = ssl_content.half().to(device)
         else:
             ssl_content = ssl_content.to(device)
+            
+        # TPU 코어 간 동기화 (필요한 경우)
+        if device_type == "tpu":
+            sync_tpu_cores()
         codes = vq_model.extract_latent(ssl_content)
         semantic = " ".join([str(i) for i in codes[0, 0, :].tolist()])
         lines.append("%s\t%s" % (wav_name, semantic))

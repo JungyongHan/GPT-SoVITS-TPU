@@ -119,9 +119,12 @@ def main(args):
     # TPU 환경 설정
     tpu_env = None
     if device_type == "tpu":
-        tpu_env = setup_tpu()
+        tpu_env = setup_tpu_slicing()  # TPU 슬라이싱 환경 설정 사용
         if tpu_env is not None:
-            logging.info("TPU를 사용하여 학습합니다.")
+            logging.info("TPU 슬라이싱 환경에서 학습합니다.")
+            # TPU 코어 수 확인
+            num_cores = get_tpu_cores_count()
+            logging.info(f"사용 가능한 TPU 코어 수: {num_cores}")
     
     trainer: Trainer = Trainer(
         max_epochs=config["train"]["epochs"],
@@ -151,6 +154,12 @@ def main(args):
         # dev_semantic_path=args.dev_semantic_path,
         # dev_phoneme_path=args.dev_phoneme_path
     )
+    
+    # TPU 환경에서 데이터 로더 최적화
+    if device_type == "tpu" and tpu_env is not None:
+        logging.info("TPU 슬라이싱 환경에 최적화된 데이터 로더를 설정합니다.")
+        # TPU에서는 use_distributed_sampler=True로 설정하는 것이 좋음
+        trainer.use_distributed_sampler = True
 
     try:
         # 使用正则表达式匹配文件名中的数字部分，并按数字大小进行排序
