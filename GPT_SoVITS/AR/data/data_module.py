@@ -1,10 +1,16 @@
 # modified from https://github.com/yangdongchao/SoundStorm/blob/master/soundstorm/s1/AR/data/data_module.py
 # reference: https://github.com/lifeiteng/vall-e
+import os
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader
 
 from AR.data.bucket_sampler import DistributedBucketSampler
 from AR.data.dataset import Text2SemanticDataset
+
+# TPU 지원을 위한 유틸리티 임포트
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from utils_tpu import is_tpu_available, get_xla_device, create_parallel_loader, create_tpu_data_sampler, sync_tpu_cores
 
 
 class Text2SemanticDataModule(LightningDataModule):
@@ -49,8 +55,14 @@ class Text2SemanticDataModule(LightningDataModule):
             else self.config["train"]["batch_size"]
         )
         batch_size = max(min(batch_size, len(self._train_dataset) // 4), 1)  # 防止不保存
-        sampler = DistributedBucketSampler(self._train_dataset, batch_size=batch_size)
-        return DataLoader(
+        
+        # TPU 환경에서는 TPU에 최적화된 샘플러 사용
+        if is_tpu_available():
+            sampler = create_tpu_data_sampler(self._train_dataset, batch_size=batch_size)
+        else:
+            sampler = DistributedBucketSampler(self._train_dataset, batch_size=batch_size)
+        
+        dataloader = DataLoader(
             self._train_dataset,
             batch_size=batch_size,
             sampler=sampler,
@@ -59,9 +71,16 @@ class Text2SemanticDataModule(LightningDataModule):
             persistent_workers=True,
             prefetch_factor=16,
         )
+        
+        # TPU 환경에서는 병렬 로더로 변환
+        if is_tpu_available():
+            device = get_xla_device()
+            return create_parallel_loader(dataloader, device)
+        
+        return dataloader
 
     def val_dataloader(self):
-        return DataLoader(
+        dataloader = DataLoader(
             self._dev_dataset,
             batch_size=1,
             shuffle=False,
@@ -70,12 +89,26 @@ class Text2SemanticDataModule(LightningDataModule):
             persistent_workers=True,
             prefetch_factor=16,
         )
+        
+        # TPU 환경에서는 병렬 로더로 변환
+        if is_tpu_available():
+            device = get_xla_device()
+            return create_parallel_loader(dataloader, device)
+            
+        return dataloader
 
     # 这个会使用到嘛？
     def test_dataloader(self):
-        return DataLoader(
+        dataloader = DataLoader(
             self._dev_dataset,
             batch_size=1,
             shuffle=False,
             collate_fn=self._train_dataset.collate,
         )
+        
+        # TPU 환경에서는 병렬 로더로 변환
+        if is_tpu_available():
+            device = get_xla_device()
+            return create_parallel_loader(dataloader, device)
+            
+        return dataloader

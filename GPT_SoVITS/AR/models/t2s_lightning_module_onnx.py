@@ -10,6 +10,10 @@ from typing import Dict
 import torch
 from pytorch_lightning import LightningModule
 
+# TPU 지원을 위한 유틸리티 임포트
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from utils_tpu import is_tpu_available, get_xla_device, move_to_device, sync_tpu_cores
+
 from AR.models.t2s_model_onnx import Text2SemanticDecoder
 from AR.modules.lr_schedulers import WarmupCosineLRSchedule
 from AR.modules.optim import ScaledAdam
@@ -41,6 +45,12 @@ class Text2SemanticLightningModule(LightningModule):
     def training_step(self, batch: Dict, batch_idx: int):
         opt = self.optimizers()
         scheduler = self.lr_schedulers()
+        
+        # TPU 환경에서는 데이터를 XLA 디바이스로 이동
+        if is_tpu_available():
+            device = get_xla_device()
+            batch = move_to_device(batch, device)
+            
         loss, acc = self.model.forward(
             batch["phoneme_ids"],
             batch["phoneme_ids_len"],
@@ -53,6 +63,10 @@ class Text2SemanticLightningModule(LightningModule):
             opt.step()
             opt.zero_grad()
             scheduler.step()
+            
+            # TPU 환경에서는 코어 간 동기화 수행
+            if is_tpu_available():
+                sync_tpu_cores()
 
         self.log(
             "total_loss",

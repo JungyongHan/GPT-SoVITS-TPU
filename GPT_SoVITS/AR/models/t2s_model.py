@@ -9,6 +9,12 @@ from torch.nn import functional as F
 from torchmetrics.classification import MulticlassAccuracy
 from tqdm import tqdm
 
+# TPU support utilities
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from utils_tpu import is_tpu_available, sync_tpu_cores
+
 from AR.models.utils import (
     dpo_loss,
     get_batch_logps,

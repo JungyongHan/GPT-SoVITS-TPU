@@ -2,6 +2,7 @@
 # reference: https://github.com/lifeiteng/vall-e
 import itertools
 import math
+import os
 import random
 from random import shuffle
 from typing import Iterator, Optional, TypeVar
@@ -9,6 +10,11 @@ from typing import Iterator, Optional, TypeVar
 import torch
 import torch.distributed as dist
 from torch.utils.data import Dataset, Sampler
+
+# TPU 지원을 위한 유틸리티 임포트
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from utils_tpu import is_tpu_available
 
 __all__ = [
     "DistributedBucketSampler",
@@ -37,15 +43,26 @@ class DistributedBucketSampler(Sampler[T_co]):
         batch_size: int = 32,
     ) -> None:
         if num_replicas is None:
-            if not dist.is_available():
+            if is_tpu_available():
+                # TPU 환경에서는 torch_xla를 사용하여 world_size 가져오기
+                import torch_xla.core.xla_model as xm
+                num_replicas = xm.xrt_world_size()
+            elif not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
-            num_replicas = dist.get_world_size() if torch.cuda.is_available() else 1
+            else:
+                num_replicas = dist.get_world_size() if torch.cuda.is_available() else 1
+                
         if rank is None:
-            if not dist.is_available():
+            if is_tpu_available():
+                # TPU 환경에서는 torch_xla를 사용하여 rank 가져오기
+                import torch_xla.core.xla_model as xm
+                rank = xm.get_ordinal()
+            elif not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
-            rank = dist.get_rank() if torch.cuda.is_available() else 0
-            if torch.cuda.is_available():
-                torch.cuda.set_device(rank)
+            else:
+                rank = dist.get_rank() if torch.cuda.is_available() else 0
+                if torch.cuda.is_available():
+                    torch.cuda.set_device(rank)
         if rank >= num_replicas or rank < 0:
             raise ValueError("Invalid rank {}, rank should be in the interval [0, {}]".format(rank, num_replicas - 1))
         self.dataset = dataset

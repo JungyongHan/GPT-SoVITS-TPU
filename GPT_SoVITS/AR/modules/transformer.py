@@ -149,7 +149,7 @@ class TransformerEncoder(nn.Module):
         if return_layer_states:
             layer_states = []  # layers' output
             output = src
-            for mod in self.layers:
+            for i, mod in enumerate(self.layers):
                 output = mod(
                     output,
                     src_mask=mask,
@@ -157,6 +157,10 @@ class TransformerEncoder(nn.Module):
                     cache=cache,
                 )
                 layer_states.append(output[0])
+                # TPU 환경에서는 각 레이어 후 동기화 수행 (메모리 최적화)
+                if is_tpu_available() and i % 2 == 1:  # 2개 레이어마다 동기화
+                    import torch_xla.core.xla_model as xm
+                    xm.mark_step()
 
             if self.norm is not None:
                 output = self.norm(output)
@@ -164,13 +168,17 @@ class TransformerEncoder(nn.Module):
             return layer_states, output
 
         output = src
-        for mod in self.layers:
+        for i, mod in enumerate(self.layers):
             output = mod(
                 output,
                 src_mask=mask,
                 src_key_padding_mask=src_key_padding_mask,
                 cache=cache,
             )
+            # TPU 환경에서는 각 레이어 후 동기화 수행 (메모리 최적화)
+            if is_tpu_available() and i % 2 == 1:  # 2개 레이어마다 동기화
+                import torch_xla.core.xla_model as xm
+                xm.mark_step()
 
         if self.norm is not None:
             output = self.norm(output)
