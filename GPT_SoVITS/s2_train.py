@@ -70,6 +70,7 @@ def main():
         if tpu_env is not None:
             xmp = tpu_env['xmp']
             # TPU 코어 수 확인
+            from GPT_SoVITS.utils_tpu import get_tpu_cores_count
             num_cores = get_tpu_cores_count()
             logging.info(f"사용 가능한 TPU 코어 수: {num_cores}")
             # TPU용 멀티프로세싱 실행 (코어 수에 맞게 설정)
@@ -122,6 +123,9 @@ def run(rank, n_gpus, hps):
     elif torch.cuda.is_available():
         torch.cuda.set_device(rank)
         device = f"cuda:{rank}"
+    else:
+        # CPU 모드
+        device = "cpu"
 
     train_dataset = TextAudioSpeakerLoader(hps.data)  ########
     train_sampler = DistributedBucketSampler(
@@ -448,6 +452,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         
         # TPU 코어 간 동기화
         if is_tpu_available():
+            from GPT_SoVITS.utils_tpu import sync_tpu_cores
             sync_tpu_cores()  # 개선된 TPU 동기화 함수 사용
 
         if rank == 0:
