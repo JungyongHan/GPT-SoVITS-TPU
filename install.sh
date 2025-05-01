@@ -172,6 +172,7 @@ else
     USE_TPU=false
 fi
 
+pip install --upgrade pip setuptools wheel
 
 if [ "$USE_TPU" = true ]; then
     echo "Installing PyTorch/XLA for TPU support..."
@@ -192,7 +193,6 @@ echo "Installing Python dependencies from requirements.txt..."
 # 刷新环境
 # Refresh environment
 hash -r
-
 pip install -r extra-req.txt --no-deps
 
 pip install -r requirements.txt
