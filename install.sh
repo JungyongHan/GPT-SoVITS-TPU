@@ -7,10 +7,6 @@ cd "$SCRIPT_DIR" || exit 1
 
 set -e
 
-if ! command -v conda &>/dev/null; then
-    echo "Conda Not Found"
-    exit 1
-fi
 
 trap 'echo "Error Occured at \"$BASH_COMMAND\" with exit code $?"; exit 1' ERR
 
@@ -139,19 +135,6 @@ fi
 
 # 安装构建工具
 # Install build tools
-echo "Installing GCC..."
-conda install -c conda-forge gcc=14 -y
-
-echo "Installing G++..."
-conda install -c conda-forge gxx -y
-
-echo "Installing ffmpeg and cmake..."
-conda install ffmpeg cmake -y
-
-echo "Installing git-lfs and zip..."
-conda install git-lfs -y
-conda install zip -y
-
 git-lfs install
 
 echo "Checking for CUDA installation..."
@@ -192,7 +175,7 @@ fi
 
 if [ "$USE_TPU" = true ]; then
     echo "Installing PyTorch/XLA for TPU support..."
-    pip install torch~=2.5.0 torch_xla[tpu]~=2.5.0 torchvision -f https://storage.googleapis.com/libtpu-releases/index.html
+    pip install torch~=2.5.1 torchaudio==2.5.1 torch_xla[tpu]~=2.5.1 -f https://storage.googleapis.com/libtpu-releases/index.html
 elif [ "$USE_CUDA" = true ]; then
     echo "Installing PyTorch with CUDA support..."
     pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
