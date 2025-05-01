@@ -87,7 +87,7 @@ def get_tpu_cores_count():
         return int(os.environ['TPU_NUM_CORES'])
     
     # 기본값으로 8 반환 (TPU v2/v3 기준)
-    return 8
+    return 4
 
 def setup_tpu_slicing():
     """TPU 슬라이싱 환경을 설정합니다."""

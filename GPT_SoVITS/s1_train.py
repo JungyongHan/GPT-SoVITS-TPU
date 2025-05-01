@@ -111,7 +111,6 @@ def main(args):
         dirpath=ckpt_dir,
     )
     logger = TensorBoardLogger(name=output_dir.stem, save_dir=output_dir)
-    os.environ["MASTER_ADDR"] = "localhost"
     os.environ["USE_LIBUV"] = "0"
     # 디바이스 유형 확인 (TPU, GPU, CPU)
     device_type = get_device_type()
