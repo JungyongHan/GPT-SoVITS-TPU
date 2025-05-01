@@ -384,7 +384,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     ) in enumerate(tqdm(train_loader)):
         # 데이터를 적절한 디바이스로 이동
         if is_tpu_available():
-            from GPT_SoVITS.utils_tpu import move_to_device
+            from GPT_SoVITS.utils_tpu import move_to_device        
             spec = move_to_device(spec, device)
             spec_lengths = move_to_device(spec_lengths, device)
             y = move_to_device(y, device)
@@ -393,13 +393,15 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             ssl.requires_grad = False
             text = move_to_device(text, device)
             text_lengths = move_to_device(text_lengths, device)
+            
         else:
             spec, spec_lengths = spec.to(device, non_blocking=True), spec_lengths.to(device, non_blocking=True)
             y, y_lengths = y.to(device, non_blocking=True), y_lengths.to(device, non_blocking=True)
             ssl = ssl.to(device, non_blocking=True)
             ssl.requires_grad = False
             text, text_lengths = text.to(device, non_blocking=True), text_lengths.to(device, non_blocking=True)
-
+        
+        print(ssl.device, spec.device, spec_lengths.device, y.device, y_lengths.device, ssl.device, text.device, text_lengths.device)
         with autocast(enabled=hps.train.fp16_run):
             (
                 y_hat,
