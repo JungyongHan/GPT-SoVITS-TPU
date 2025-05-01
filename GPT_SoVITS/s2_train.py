@@ -157,13 +157,13 @@ def run(rank, n_gpus, hps):
     # 데이터 로더 생성
     train_loader = DataLoader(
         train_dataset,
-        num_workers=6,
+        num_workers=6 if not is_tpu_available() else 0,
         shuffle=False,
         pin_memory=True,
         collate_fn=collate_fn,
         batch_sampler=train_sampler,
-        persistent_workers=True,
-        prefetch_factor=4,
+        persistent_workers=True if not is_tpu_available() else False,
+        prefetch_factor=4 if not is_tpu_available() else None,
     )
     
     # TPU용 병렬 로더 생성 (슬라이싱 환경에 최적화)
@@ -373,8 +373,10 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     set_loader_epoch(train_loader, epoch)
     global global_step
 
+    print("preparing gan training")
     net_g.train()
     net_d.train()
+    print("start raining")
     for batch_idx, (
         ssl,
         ssl_lengths,
