@@ -11,7 +11,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = hps.train.gpu_numbers.replace("-", ",")
 # TPU 지원 추가
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from GPT_SoVITS.utils_tpu import is_tpu_available, setup_tpu, get_device_type, get_xla_device, move_to_device, create_parallel_loader, setup_tpu_slicing, optimize_tpu_memory, sync_tpu_cores
+from GPT_SoVITS.utils_tpu import is_tpu_available
 import logging
 import gc  # 가비지 컬렉션 추가
 
@@ -76,16 +76,11 @@ device = "cpu"  # cuda以外的设备，等mps优化后加入
 def main():
     # TPU 또는 GPU 설정
     if is_tpu_available():
+        os.environ['PJRT_DEVICE'] = 'TPU'
         from GPT_SoVITS.utils_tpu import get_tpu_cores_count
         num_cores = get_tpu_cores_count()  # 자동으로 TPU 코어 수 감지
        
         # TPU v4-32 메모리 최적화 설정
-        os.environ['PJRT_DEVICE'] = 'TPU'
-        os.environ['XLA_USE_BF16'] = '1'  # BF16 사용 (TPU에서 성능 향상)
-        os.environ['XLA_TENSOR_ALLOCATOR_MAXSIZE'] = '2000000000'  # 메모리 할당 크기 증가 (2GB)
-        os.environ['XLA_TRANSFER_GUARD_DEVICE_MEMORY'] = '1'  # 메모리 가드 활성화
-        os.environ['XLA_EXPERIMENTAL_ASYNC_COMPILATION'] = '1'  # 비동기 컴파일 활성화
-        
         # TPU용 멀티프로세싱 실행 (코어 수에 맞게 설정)
         # xmp.spawn 이전에 xm.xla_device 호출하면 안됌.
         import torch_xla.distributed.xla_multiprocessing as xmp
@@ -128,14 +123,12 @@ def run(rank, n_gpus, hps):
     else:
         # TPU 환경에서 필요한 추가 모듈 import
         import torch_xla.core.xla_model as xm
-        # torch_xla.core.xla_builder 모듈에서 set_lowering_options 함수가 없으므로 import 제거
         dist.init_process_group('xla', init_method='xla://')
     
     torch.manual_seed(hps.train.seed)
     
     # 디바이스 설정
     if is_tpu_available():
-        # TPU는 XLA가 자동으로 처리
         import torch_xla.core.xla_model as xm
         device = xm.xla_device()
 
@@ -151,7 +144,6 @@ def run(rank, n_gpus, hps):
     
     # TPU v4-32에 최적화된 배치 크기 계산
     if is_tpu_available():
-        # TPU v4-32에서는 더 작은 배치 크기 사용
         effective_batch_size = max(1, hps.train.batch_size // 2)
         logging.info(f"TPU v4-32 환경에 최적화된 배치 크기 사용: {effective_batch_size}")
     else:
@@ -335,11 +327,7 @@ def run(rank, n_gpus, hps):
         # traceback.print_exc()
         epoch_str = 1
         global_step = 0
-        if (
-            hps.train.pretrained_s2G != ""
-            and hps.train.pretrained_s2G != None
-            and os.path.exists(hps.train.pretrained_s2G)
-        ):
+        if hps.train.pretrained_s2G != "" and hps.train.pretrained_s2G != None and os.path.exists(hps.train.pretrained_s2G):
             if rank == 0:
                 logger.info("loaded pretrained %s" % hps.train.pretrained_s2G)
             print(
@@ -392,7 +380,10 @@ def run(rank, n_gpus, hps):
         scheduler_g.step()
         scheduler_d.step()
 
-    scaler = GradScaler(enabled=hps.train.fp16_run)
+    if is_tpu_available():
+        scaler = None
+    else:
+        scaler = GradScaler(enabled=hps.train.fp16_run)
 
     if is_tpu_available():
         import torch_xla.core.xla_model as xm
@@ -401,13 +392,7 @@ def run(rank, n_gpus, hps):
         print("start training from epoch %s" % epoch_str)
         
     for epoch in range(epoch_str, hps.train.epochs + 1):
-        if rank == 0:
-            if is_tpu_available():
-                import torch_xla.core.xla_model as xm
-                xm.master_print(f"에포크 {epoch}: 디바이스 확인 - {device}")
-            else:
-                print('device Check')
-                
+        if rank == 0:               
             train_and_evaluate(
                 rank,
                 epoch,
@@ -440,7 +425,6 @@ def run(rank, n_gpus, hps):
         # 에포크 종료 후 TPU 메모리 최적화
         if is_tpu_available():
             import torch_xla.core.xla_model as xm
-            optimize_tpu_memory()
             xm.master_print(f"에포크 {epoch} 완료: 메모리 최적화 수행")
             
     if is_tpu_available():
@@ -449,11 +433,27 @@ def run(rank, n_gpus, hps):
     else:
         print("training done")
 
-def set_loader_epoch(loader, epoch):
-    if hasattr(loader, "batch_sampler") and hasattr(loader.batch_sampler, "set_epoch"):
-        loader.batch_sampler.set_epoch(epoch)
-    elif hasattr(loader, "_loader") and hasattr(loader._loader, "batch_sampler") and hasattr(loader._loader.batch_sampler, "set_epoch"):
-        pass
+def _train_update(device, epoch, step, total_step, loss, tracker, writer):
+    import torch_xla.runtime as xr
+    import sys
+    def _get_device_spec(device):
+        ordinal = xr.global_ordinal()
+        return str(device) if ordinal < 0 else '{}/{}'.format(device, ordinal)
+
+    rate = tracker.rate()
+    global_rate = tracker.global_rate()
+    # print(
+    #     f"[Train] {_get_device_spec(device)} Epoch: [{epoch}/{hps.train.epochs}][{step}/{total_step}] "
+    #     f"Loss: {loss.item():.4f} Rate: {rate:.4f} Global Rate: {global_rate:.4f} ",
+    #     flush=True,
+    # )
+    # use sys.stdout.flush() instead of print()
+    sys.stdout.write(
+        f"[Train] {_get_device_spec(device)} Epoch: [{epoch}/{hps.train.epochs}][{step}/{total_step}] "
+        f"Loss: {loss.item():.4f} Rate: {rate:.4f} Global Rate: {global_rate:.4f} \n"
+    )
+    sys.stdout.flush()
+
 
 def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loaders, logger, writers):
     net_g, net_d = nets
@@ -463,14 +463,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     if writers is not None:
         writer, writer_eval = writers
 
-    # TPU v4-32 메모리 최적화
-    if is_tpu_available():
-        import torch_xla.core.xla_model as xm
-        from GPT_SoVITS.utils_tpu import optimize_tpu_memory, sync_tpu_cores
-        optimize_tpu_memory()
-        xm.master_print(f"에포크 {epoch}: TPU v4-32 메모리 최적화를 수행했습니다.")
-
-    set_loader_epoch(train_loader, epoch)
+    if hasattr(loader, "batch_sampler") and hasattr(loader.batch_sampler, "set_epoch"):
+        loader.batch_sampler.set_epoch(epoch)
     global global_step
 
     if is_tpu_available():
@@ -490,7 +484,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     # TPU v4-32에서 메모리 문제 방지를 위한 배치 처리 개선
     memory_error_count = 0
     max_memory_errors = 3
-    
+    tracker = None
     # TPU에서 XLA 컴파일러 최적화 설정
     if is_tpu_available():
         # XLA 컴파일 옵션 설정 - 더 작은 그룹 크기로 메모리 사용량 감소
@@ -499,29 +493,14 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             import torch_xla.core.xla_model as xm
             # 메모리 최적화 설정 (set_lowering_options 대신 사용)
             xm.mark_step()
+            tracker = xm.RateTracker()
             logging.info("TPU 환경에서 XLA 메모리 최적화를 활성화했습니다.")
         except Exception as e:
             logging.warning(f"TPU 최적화 설정 중 오류 발생: {str(e)}")
             logging.info("기본 TPU 설정으로 계속 진행합니다.")
     
     try:
-        for batch_idx, (
-            ssl,
-            ssl_lengths,
-            spec,
-            spec_lengths,
-            y,
-            y_lengths,
-            text,
-            text_lengths,
-        ) in enumerate(train_loader):
-            # 배치 크기 확인 및 메모리 모니터링
-            if is_tpu_available() and batch_idx % 10 == 0:
-                # 메모리 최적화
-                gc.collect()
-                from GPT_SoVITS.utils_tpu import optimize_tpu_memory, sync_tpu_cores
-                optimize_tpu_memory()
-            # 데이터를 적절한 디바이스로 이동 (TPU v4-32 최적화)
+        for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
             if is_tpu_available():
                 from GPT_SoVITS.utils_tpu import move_to_device, get_xla_device, sync_tpu_cores
                 device = get_xla_device()
@@ -537,233 +516,223 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 text_lengths = move_to_device(text_lengths, device)
                 
                 # 명시적 가비지 컬렉션 호출 (메모리 누수 방지)
-                gc.collect()
+                
                 
                 # TPU 코어 간 동기화 (데이터 로딩 후, 모델 실행 전)
                 sync_tpu_cores()
+            elif torch.cuda.is_available():
+                spec, spec_lengths = (
+                    spec.cuda(
+                        rank,
+                        non_blocking=True,
+                    ),
+                    spec_lengths.cuda(
+                        rank,
+                        non_blocking=True,
+                    ),
+                )
+                y, y_lengths = (
+                    y.cuda(
+                        rank,
+                        non_blocking=True,
+                    ),
+                    y_lengths.cuda(
+                        rank,
+                        non_blocking=True,
+                    ),
+                )
+                ssl = ssl.cuda(rank, non_blocking=True)
+                ssl.requires_grad = False
+                # ssl_lengths = ssl_lengths.cuda(rank, non_blocking=True)
+                text, text_lengths = (
+                    text.cuda(
+                        rank,
+                        non_blocking=True,
+                    ),
+                    text_lengths.cuda(
+                        rank,
+                        non_blocking=True,
+                    ),
+                )
+            else:
+                spec, spec_lengths = spec.to(device), spec_lengths.to(device)
+                y, y_lengths = y.to(device), y_lengths.to(device)
+                ssl = ssl.to(device)
+                ssl.requires_grad = False
+                # ssl_lengths = ssl_lengths.cuda(rank, non_blocking=True)
+                text, text_lengths = text.to(device), text_lengths.to(device)
+
+                spec, spec_lengths = spec.to(device, non_blocking=True), spec_lengths.to(device, non_blocking=True)
+                y, y_lengths = y.to(device, non_blocking=True), y_lengths.to(device, non_blocking=True)
+                ssl = ssl.to(device, non_blocking=True)
+                ssl.requires_grad = False
+                text, text_lengths = text.to(device, non_blocking=True), text_lengths.to(device, non_blocking=True)
             
-        else:
-            spec, spec_lengths = spec.to(device, non_blocking=True), spec_lengths.to(device, non_blocking=True)
-            y, y_lengths = y.to(device, non_blocking=True), y_lengths.to(device, non_blocking=True)
-            ssl = ssl.to(device, non_blocking=True)
-            ssl.requires_grad = False
-            text, text_lengths = text.to(device, non_blocking=True), text_lengths.to(device, non_blocking=True)
-        
-        with autocast(enabled=hps.train.fp16_run):
-            # TPU v4-32에서 메모리 효율적인 forward 패스
-            if is_tpu_available():
-                # 그래디언트 체크포인팅 활성화 상태 확인
-                torch.cuda.empty_cache() if torch.cuda.is_available() else None
-                gc.collect()
+            with autocast(enabled=hps.train.fp16_run):
+                (
+                    y_hat,
+                    kl_ssl,
+                    ids_slice,
+                    x_mask,
+                    z_mask,
+                    (z, z_p, m_p, logs_p, m_q, logs_q),
+                    stats_ssl,
+                ) = net_g(ssl, spec, spec_lengths, text, text_lengths)
                 
-            (
-                y_hat,
-                kl_ssl,
-                ids_slice,
-                x_mask,
-                z_mask,
-                (z, z_p, m_p, logs_p, m_q, logs_q),
-                stats_ssl,
-            ) = net_g(ssl, spec, spec_lengths, text, text_lengths)
+                mel = spec_to_mel_torch(
+                    spec,
+                    hps.data.filter_length,
+                    hps.data.n_mel_channels,
+                    hps.data.sampling_rate,
+                    hps.data.mel_fmin,
+                    hps.data.mel_fmax,
+                )
+                y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
+                y_hat_mel = mel_spectrogram_torch(
+                    y_hat.squeeze(1),
+                    hps.data.filter_length,
+                    hps.data.n_mel_channels,
+                    hps.data.sampling_rate,
+                    hps.data.hop_length,
+                    hps.data.win_length,
+                    hps.data.mel_fmin,
+                    hps.data.mel_fmax,
+                )
+
+                y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
+
+                # Discriminator
+                y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
+                with autocast(enabled=False):
+                    loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
+                        y_d_hat_r,
+                        y_d_hat_g,
+                    )
+                    loss_disc_all = loss_disc
             
-            # TPU에서 불필요한 중간 텐서 즉시 해제
-            if is_tpu_available():
-                # 사용이 끝난 입력 텐서 해제
-                del ssl_lengths, spec_lengths, text_lengths
-                gc.collect()
-                # 중간 계산 후 TPU 코어 동기화 (중요)
-                import torch_xla.core.xla_model as xm
+            # TPU v4-32에서 메모리 효율적인 역전파
+            optim_d.zero_grad()
+            if scaler is None:
+                grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
+                xm.optimizer_step(optim_d)
+            else:
+                scaler.scale(loss_disc_all).backward()
+                scaler.unscale_(optim_d)
+                grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
+                scaler.step(optim_d)
+                
+            with autocast(enabled=hps.train.fp16_run):
+                # Generator
+                y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
+                with autocast(enabled=False):
+                    loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
+                    loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
+
+                    loss_fm = feature_loss(fmap_r, fmap_g)
+                    loss_gen, losses_gen = generator_loss(y_d_hat_g)
+                    loss_gen_all = loss_gen + loss_fm + loss_mel + kl_ssl * 1 + loss_kl
+
+            # TPU v4-32에서 메모리 효율적인 역전파
+            optim_g.zero_grad()
+            if scaler is None:
+                grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
+                xm.optimizer_step(optim_g)
+                tracker.add(hps.train.batch_size // 2)
+                xm.add_step_closure(
+                    _train_update, args=(device, epoch, global_step, len(train_loader), loss_gen, tracker, writer)
+                )
                 xm.mark_step()
-
-            mel = spec_to_mel_torch(
-                spec,
-                hps.data.filter_length,
-                hps.data.n_mel_channels,
-                hps.data.sampling_rate,
-                hps.data.mel_fmin,
-                hps.data.mel_fmax,
-            )
-            y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
-            y_hat_mel = mel_spectrogram_torch(
-                y_hat.squeeze(1),
-                hps.data.filter_length,
-                hps.data.n_mel_channels,
-                hps.data.sampling_rate,
-                hps.data.hop_length,
-                hps.data.win_length,
-                hps.data.mel_fmin,
-                hps.data.mel_fmax,
-            )
-
-            y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
-
-            # Discriminator
-            y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
-            with autocast(enabled=False):
-                loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
-                    y_d_hat_r,
-                    y_d_hat_g,
-                )
-                loss_disc_all = loss_disc
-        # TPU v4-32에서 메모리 효율적인 역전파
-        optim_d.zero_grad()
-        scaler.scale(loss_disc_all).backward()
-        
-        # TPU에서 그래디언트 동기화 및 메모리 최적화
-        if is_tpu_available():
-            import torch_xla.core.xla_model as xm
-            # 그래디언트 계산 후 동기화 (중요)
-            xm.mark_step()
+            else:
+                scaler.scale(loss_gen_all).backward()
+                scaler.unscale_(optim_g)
+                grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
+                scaler.step(optim_g)
+                scaler.update()
             
-            # 메모리 최적화를 위한 가비지 컬렉션
-            gc.collect()
-        
-        scaler.unscale_(optim_d)
-        grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
-        scaler.step(optim_d)
-        
-        # TPU에서 옵티마이저 스텝 후 동기화 (중요)
-        if is_tpu_available():
-            import torch_xla.core.xla_model as xm
-            # 옵티마이저 스텝 후 동기화 (중요)
-            xm.mark_step()
-            
-            # 배치 진행 상황 로깅 (주기적으로)
-            if batch_idx % 10 == 0:
-                xm.master_print(f"에포크 {epoch}, 배치 {batch_idx}/{len(train_loader)}: 판별자 학습 완료")
-        
-        # TPU에서 메모리 정리
-        if is_tpu_available():
-            # 불필요한 중간 텐서 해제
-            del loss_disc, losses_disc_r, losses_disc_g
-            gc.collect()
-
-        with autocast(enabled=hps.train.fp16_run):
-            # Generator
-            y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
-            with autocast(enabled=False):
-                loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
-                loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
-
-                loss_fm = feature_loss(fmap_r, fmap_g)
-                loss_gen, losses_gen = generator_loss(y_d_hat_g)
-                loss_gen_all = loss_gen + loss_fm + loss_mel + kl_ssl * 1 + loss_kl
-
-        # TPU v4-32에서 메모리 효율적인 역전파
-        optim_g.zero_grad()
-        scaler.scale(loss_gen_all).backward()
-        
-        # TPU에서 그래디언트 동기화 및 메모리 최적화
-        if is_tpu_available():
-            import torch_xla.core.xla_model as xm
-            # 그래디언트 계산 후 동기화 (중요)
-            xm.mark_step()
-            
-            # 메모리 최적화를 위한 가비지 컬렉션
-            gc.collect()
-        
-        scaler.unscale_(optim_g)
-        grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
-        scaler.step(optim_g)
-        scaler.update()
-        
-        # TPU에서 옵티마이저 스텝 후 동기화 (중요)
-        if is_tpu_available():
-            import torch_xla.core.xla_model as xm
-            # 옵티마이저 스텝 후 동기화 (중요)
-            xm.mark_step()
-            
-            # 배치 진행 상황 로깅 (주기적으로)
-            if batch_idx % 10 == 0:
-                xm.master_print(f"에포크 {epoch}, 배치 {batch_idx}/{len(train_loader)}: 생성자 학습 완료")
-                
-            # 배치 처리 후 메모리 최적화
-            gc.collect()
-            
-            # 주기적으로 메모리 최적화 수행
-            if batch_idx % 50 == 0:
-                optimize_tpu_memory()
-                xm.master_print(f"에포크 {epoch}, 배치 {batch_idx}: 메모리 최적화 수행")
-        
-        # TPU에서 메모리 정리
-        if is_tpu_available():
-            # 불필요한 중간 텐서 해제
-            del loss_mel, loss_kl, loss_fm, loss_gen, losses_gen
-            gc.collect()
-        
-        # TPU 코어 간 동기화 및 메모리 최적화
-        if is_tpu_available():
-            from GPT_SoVITS.utils_tpu import sync_tpu_cores
-            sync_tpu_cores()  # 개선된 TPU 동기화 함수 사용
-            
-            # 중간 텐서 메모리 해제 (메모리 누수 방지)
-            del y_hat, kl_ssl, ids_slice, x_mask, z_mask, z, z_p, m_p, logs_p, m_q, logs_q, stats_ssl
-            del mel, y_mel, y_hat_mel
-            del y_d_hat_r, y_d_hat_g, fmap_r, fmap_g
-            gc.collect()
-
-        if rank == 0:
-            if global_step % hps.train.log_interval == 0:
-                lr = optim_g.param_groups[0]["lr"]
-                losses = [loss_disc, loss_gen, loss_fm, loss_mel, kl_ssl, loss_kl]
-                logger.info(
-                    "Train Epoch: {} [{:.0f}%]".format(
-                        epoch,
-                        100.0 * batch_idx / len(train_loader),
+            if rank == 0:
+                if global_step % hps.train.log_interval == 0:
+                    lr = optim_g.param_groups[0]["lr"]
+                    losses = [loss_disc, loss_gen, loss_fm, loss_mel, kl_ssl, loss_kl]
+                    logger.info(
+                        "Train Epoch: {} [{:.0f}%]".format(
+                            epoch,
+                            100.0 * batch_idx / len(train_loader),
+                        )
                     )
-                )
-                logger.info([x.item() for x in losses] + [global_step, lr])
+                    logger.info([x.item() for x in losses] + [global_step, lr])
+                    if is_tpu_available():
+                        xm.master_print(
+                            "Train Epoch: {} [{:.0f}%]".format(
+                                epoch,
+                                100.0 * batch_idx / len(train_loader),
+                                )
+                        )
+                        xm.master_print(
+                            [x.item() for x in losses] + [global_step, lr]
+                        )
 
-                scalar_dict = {
-                    "loss/g/total": loss_gen_all,
-                    "loss/d/total": loss_disc_all,
-                    "learning_rate": lr,
-                    "grad_norm_d": grad_norm_d,
-                    "grad_norm_g": grad_norm_g,
-                }
-                scalar_dict.update(
-                    {
-                        "loss/g/fm": loss_fm,
-                        "loss/g/mel": loss_mel,
-                        "loss/g/kl_ssl": kl_ssl,
-                        "loss/g/kl": loss_kl,
+                    scalar_dict = {
+                        "loss/g/total": loss_gen_all,
+                        "loss/d/total": loss_disc_all,
+                        "learning_rate": lr,
+                        "grad_norm_d": grad_norm_d,
+                        "grad_norm_g": grad_norm_g,
                     }
-                )
+                    scalar_dict.update(
+                        {
+                            "loss/g/fm": loss_fm,
+                            "loss/g/mel": loss_mel,
+                            "loss/g/kl_ssl": kl_ssl,
+                            "loss/g/kl": loss_kl,
+                        }
+                    )
 
-                # scalar_dict.update({"loss/g/{}".format(i): v for i, v in enumerate(losses_gen)})
-                # scalar_dict.update({"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)})
-                # scalar_dict.update({"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)})
-                image_dict = None
-                try:  ###Some people installed the wrong version of matplotlib.
-                    image_dict = {
-                        "slice/mel_org": utils.plot_spectrogram_to_numpy(
-                            y_mel[0].data.cpu().numpy(),
-                        ),
-                        "slice/mel_gen": utils.plot_spectrogram_to_numpy(
-                            y_hat_mel[0].data.cpu().numpy(),
-                        ),
-                        "all/mel": utils.plot_spectrogram_to_numpy(
-                            mel[0].data.cpu().numpy(),
-                        ),
-                        "all/stats_ssl": utils.plot_spectrogram_to_numpy(
-                            stats_ssl[0].data.cpu().numpy(),
-                        ),
-                    }
-                except:
-                    pass
-                if image_dict:
-                    utils.summarize(
-                        writer=writer,
-                        global_step=global_step,
-                        images=image_dict,
-                        scalars=scalar_dict,
-                    )
-                else:
-                    utils.summarize(
-                        writer=writer,
-                        global_step=global_step,
-                        scalars=scalar_dict,
-                    )
+                    # scalar_dict.update({"loss/g/{}".format(i): v for i, v in enumerate(losses_gen)})
+                    # scalar_dict.update({"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)})
+                    # scalar_dict.update({"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)})
+                    image_dict = None
+                    try:  ###Some people installed the wrong version of matplotlib.
+                        image_dict = {
+                            "slice/mel_org": utils.plot_spectrogram_to_numpy(
+                                y_mel[0].data.cpu().numpy(),
+                            ),
+                            "slice/mel_gen": utils.plot_spectrogram_to_numpy(
+                                y_hat_mel[0].data.cpu().numpy(),
+                            ),
+                            "all/mel": utils.plot_spectrogram_to_numpy(
+                                mel[0].data.cpu().numpy(),
+                            ),
+                            "all/stats_ssl": utils.plot_spectrogram_to_numpy(
+                                stats_ssl[0].data.cpu().numpy(),
+                            ),
+                        }
+                    except:
+                        pass
+                    if image_dict:
+                        utils.summarize(
+                            writer=writer,
+                            global_step=global_step,
+                            images=image_dict,
+                            scalars=scalar_dict,
+                        )
+                    else:
+                        utils.summarize(
+                            writer=writer,
+                            global_step=global_step,
+                            scalars=scalar_dict,
+                        )
+                    if is_tpu_available():
+                        import torch_xla.debug.metrics_compare_utils as mcu
+                        import torch_xla.debug.metrics as met
+                        import torch_xla.core.xla_model as xm
+
+                        metrics = mcu.parse_metrics_report(met.metrics_report())
+                        aten_ops_sum = 0
+                        for metric_name, metric_value in metrics.items():
+                            if metric_name.find('aten::') == 0:
+                                aten_ops_sum += metric_value
+                            summary_writer.add_scalar(metric_name, metric_value, global_step)
+                            summary_writer.add_scalar('aten_ops_sum', aten_ops_sum, global_step)
             global_step += 1
     except Exception as e:
         # TPU 메모리 오류 처리
@@ -773,11 +742,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 memory_error_count += 1
                 xm.master_print(f"TPU 메모리 오류 발생 ({memory_error_count}/{max_memory_errors}): {str(e)}")
                 
-                # 메모리 정리
-                gc.collect()
-                optimize_tpu_memory()
-                
-                # 메모리 오류가 지속되면 배치 크기 감소 시도
                 if memory_error_count >= max_memory_errors and rank == 0:
                     xm.master_print("지속적인 TPU 메모리 오류로 인해 배치 크기를 줄이는 것을 고려하세요.")
                     xm.master_print("config.json 파일에서 'batch_size' 값을 절반으로 줄이고 다시 시도하세요.")

@@ -12,26 +12,6 @@ def is_tpu_available():
     except ImportError:
         return False
 
-def setup_tpu():
-    """TPU 환경을 설정합니다."""
-    if not is_tpu_available():
-        logging.warning("TPU를 사용할 수 없습니다. PyTorch XLA가 설치되어 있는지 확인하세요.")
-        return None
-    
-    import torch_xla.core.xla_model as xm
-    import torch_xla.distributed.xla_multiprocessing as xmp
-    import torch_xla.distributed.parallel_loader as pl
-    
-    # TPU 슬라이싱 관련 환경 변수 설정
-    os.environ['XLA_USE_BF16'] = '1'  # BF16 사용 (TPU에서 성능 향상)
-    os.environ['XLA_TENSOR_ALLOCATOR_MAXSIZE'] = '100000000'  # 메모리 할당 크기 증가
-    
-    logging.info("TPU 환경을 설정합니다.")
-    return {
-        'xm': xm,
-        'xmp': xmp,
-        'pl': pl
-    }
 
 def get_xla_device():
     """XLA 디바이스를 반환합니다."""
@@ -90,57 +70,7 @@ def get_tpu_cores_count():
     
     # 기본값으로 8 반환 (TPU v2/v3 기준)
     return 4
-
-def setup_tpu_slicing():
-    """TPU 슬라이싱 환경을 설정합니다."""
-    if not is_tpu_available():
-        logging.warning("TPU를 사용할 수 없습니다. PyTorch XLA가 설치되어 있는지 확인하세요.")
-        return None
     
-    import torch_xla.core.xla_model as xm
-    import torch_xla.distributed.xla_multiprocessing as xmp
-    import torch_xla.distributed.parallel_loader as pl
-    
-    # TPU v4-32 최적화를 위한 환경 변수 설정
-    os.environ['XLA_USE_BF16'] = '1'  # BF16 사용 (TPU에서 성능 향상)
-    os.environ['XLA_TENSOR_ALLOCATOR_MAXSIZE'] = '2000000000'  # 메모리 할당 크기 증가 (2GB)
-    os.environ['XLA_TRANSFER_GUARD_DEVICE_MEMORY'] = '1'  # 메모리 가드 활성화
-    os.environ['XLA_TRANSFER_GUARD_HOST_MEMORY'] = '1'  # 호스트 메모리 가드 활성화
-    os.environ['XLA_SYNC_WAIT'] = '1'  # 동기화 대기 활성화
-    os.environ['TPU_COMPILE_XLA_CLUSTERS'] = '1'  # XLA 클러스터 컴파일 활성화
-    os.environ['XLA_DUMP_FATAL_STACK'] = '1'  # 오류 발생 시 스택 덤프
-    
-    # 추가 XLA 최적화 환경 변수
-    os.environ['XLA_EXPERIMENTAL_ASYNC_COMPILATION'] = '1'  # 비동기 컴파일 활성화
-    os.environ['XLA_EXPERIMENTAL_ENABLE_ASYNC_ALL_GATHER'] = '1'  # 비동기 all_gather 활성화
-    os.environ['XLA_EXPERIMENTAL_ENABLE_ASYNC_REDUCE_SCATTER'] = '1'  # 비동기 reduce_scatter 활성화
-    os.environ['XLA_EXPERIMENTAL_ENABLE_ASYNC_COLLECTIVE_PERMUTE'] = '1'  # 비동기 collective_permute 활성화
-    os.environ['XLA_EXPERIMENTAL_ENABLE_ASYNC_ALL_REDUCE'] = '1'  # 비동기 all_reduce 활성화
-    
-    # TPU v4-32 메모리 최적화
-    try:
-        import torch_xla.debug.metrics as met
-        # 메모리 사용량을 85%로 제한하여 OOM 방지 (더 안전한 값)
-        met.set_memory_fraction(0.85)
-        logging.info("TPU 메모리 사용량을 85%로 제한합니다.")
-        
-        # XLA 컴파일러 최적화 설정
-        import torch_xla.core.xla_builder as xb
-        # 더 작은 그룹 크기로 메모리 사용량 감소
-        # xb.set_lowering_options("max_group_size=4,min_group_size=1")
-        logging.info("XLA 컴파일러 최적화 설정을 적용했습니다.")
-    except Exception as e:
-        logging.warning(f"TPU 메모리 최적화 설정 중 오류 발생: {e}")
-    
-    # 메모리 최적화를 위한 가비지 컬렉션
-    gc.collect()
-    
-    logging.info("TPU v4-32 슬라이싱 환경을 설정했습니다.")
-    return {
-        'xm': xm,
-        'xmp': xmp,
-        'pl': pl
-    }
 
 def sync_tpu_cores():
     """TPU 코어 간 동기화를 수행하고 메모리를 최적화합니다."""
@@ -148,9 +78,7 @@ def sync_tpu_cores():
         return
     
     import torch_xla.core.xla_model as xm
-    # 명시적 가비지 컬렉션 호출
-    gc.collect()
-    
+    # 명시적 가비지 컬렉션 호출    
     # TPU 코어 동기화 - 중요: 이 호출은 TPU 코어 간 동기화를 수행합니다
     xm.mark_step()
     
@@ -202,9 +130,7 @@ def optimize_tpu_memory():
     if not is_tpu_available():
         return False
     
-    # 가비지 컬렉션 강제 실행
-    gc.collect()
-    
+
     # TPU 메모리 정리
     import torch_xla.core.xla_model as xm
     xm.mark_step()
@@ -268,50 +194,7 @@ def tpu_safe_mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_si
     spec = torch.log(torch.clamp(spec, min=1e-5) * 1.0)
     
     return spec
-    """TPU v4-32 메모리 사용량을 최적화합니다."""
-    if not is_tpu_available():
-        return
-    
-    # 명시적 가비지 컬렉션 호출
-    gc.collect()
-    
-    # TPU 메모리 최적화
-    try:
-        import torch_xla.core.xla_model as xm
-        import torch_xla.debug.metrics as met
-        
-        # 메모리 통계 수집 및 로깅
-        if xm.get_ordinal() == 0:
-            memory_stats = met.metric_data('MemoryStats')
-            if memory_stats:
-                logging.debug(f"TPU 메모리 최적화 전 사용량: {memory_stats}")
-        
-        # 메모리 최적화 수행
-        xm.mark_step()
-        gc.collect()
-        
-        # 메모리 사용량 제한 설정 (TPU v4-32에 최적화)
-        try:
-            # 메모리 사용량을 85%로 제한하여 OOM 방지
-            met.set_memory_fraction(0.85)
-        except:
-            pass
-            
-        # XLA 컴파일러 최적화 설정
-        try:
-            import torch_xla.core.xla_builder as xb
-            # 더 작은 그룹 크기로 메모리 사용량 감소
-            # xb.set_lowering_options("max_group_size=4,min_group_size=1")
-        except:
-            pass
-        
-        # 최적화 후 메모리 통계 수집 및 로깅
-        if xm.get_ordinal() == 0:
-            memory_stats = met.metric_data('MemoryStats')
-            if memory_stats:
-                logging.debug(f"TPU 메모리 최적화 후 사용량: {memory_stats}")
-    except Exception as e:
-        logging.warning(f"TPU 메모리 최적화 중 오류 발생: {e}")
+
 
 if __name__ == "__main__":
     print(f"TPU 사용 가능 여부: {is_tpu_available()}")
