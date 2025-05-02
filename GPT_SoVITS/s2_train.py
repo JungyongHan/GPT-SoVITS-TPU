@@ -11,9 +11,19 @@ os.environ["CUDA_VISIBLE_DEVICES"] = hps.train.gpu_numbers.replace("-", ",")
 # TPU 지원 추가
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from GPT_SoVITS.utils_tpu import is_tpu_available, setup_tpu, get_device_type, get_xla_device, move_to_device, create_parallel_loader, setup_tpu_slicing
+from GPT_SoVITS.utils_tpu import is_tpu_available, setup_tpu, get_device_type, get_xla_device, move_to_device, create_parallel_loader, setup_tpu_slicing, optimize_tpu_memory, sync_tpu_cores
 import logging
 import gc  # 가비지 컬렉션 추가
+
+# TPUv4 최적화 설정
+TPU_OPTIMIZED_KWARGS = {
+    'persistent_workers': True,
+    'prefetch_factor': 32,
+    'loader_prefetch_size': 128,
+    'device_prefetch_size': 1,
+    'num_workers': 16,
+    'host_to_device_transfer_threads': 4,
+}
 
 import torch
 import torch.distributed as dist
@@ -37,7 +47,12 @@ from module.data_utils import (
     TextAudioSpeakerLoader,
 )
 from module.losses import discriminator_loss, feature_loss, generator_loss, kl_loss
-from module.mel_processing import mel_spectrogram_torch, spec_to_mel_torch
+# TPU 환경에서는 TPU 호환 버전의 mel_processing 모듈 사용
+if is_tpu_available():
+    from module.mel_processing_tpu import mel_spectrogram_torch, spec_to_mel_torch
+    logging.info("TPU 호환 mel_processing 모듈을 사용합니다.")
+else:
+    from module.mel_processing import mel_spectrogram_torch, spec_to_mel_torch
 from module.models import (
     MultiPeriodDiscriminator,
     SynthesizerTrn,
@@ -67,16 +82,20 @@ def main():
             xmp = tpu_env['xmp']
             # TPU 코어 수 확인
             from GPT_SoVITS.utils_tpu import get_tpu_cores_count
-            num_cores = 1  # 일단 테스트를 위해 1 지정, 이후 get_tpu_cores_count 함수로 수정
-            print(f"사용 가능한 TPU 코어 수: {num_cores}")
-            print(f"사용 가능한 TPU 코어 수: {num_cores}")
+            num_cores = get_tpu_cores_count()  # 자동으로 TPU 코어 수 감지
+            import torch_xla.core.xla_model as xm
+            xm.master_print(f"사용 가능한 TPU 코어 수: {num_cores}")
+            xm.master_print(f"TPUv4 최적화 설정 적용 중...")
             
             # TPU v4-32 메모리 최적화 설정
+            os.environ['PJRT_DEVICE'] = 'TPU'
             os.environ['XLA_USE_BF16'] = '1'  # BF16 사용 (TPU에서 성능 향상)
-            os.environ['XLA_TENSOR_ALLOCATOR_MAXSIZE'] = '1000000000'  # 메모리 할당 크기 증가
+            os.environ['XLA_TENSOR_ALLOCATOR_MAXSIZE'] = '2000000000'  # 메모리 할당 크기 증가 (2GB)
             os.environ['XLA_TRANSFER_GUARD_DEVICE_MEMORY'] = '1'  # 메모리 가드 활성화
+            os.environ['XLA_EXPERIMENTAL_ASYNC_COMPILATION'] = '1'  # 비동기 컴파일 활성화
             
             # TPU용 멀티프로세싱 실행 (코어 수에 맞게 설정)
+            xm.master_print(f"TPU 멀티프로세싱 시작 (코어 수: {num_cores})")
             xmp.spawn(run, args=(num_cores, hps), nprocs=num_cores)
             return
     
@@ -126,8 +145,7 @@ def run(rank, n_gpus, hps):
         # TPU는 XLA가 자동으로 처리
         import torch_xla.core.xla_model as xm
         device = xm.xla_device()
-        rank = math.trunc(xm.get_ordinal()/n_gpus)
-        print(f"My device: {device}, My rank: {rank}")
+        rank = xm.get_ordinal() % n_gpus
 
     elif torch.cuda.is_available():
         torch.cuda.set_device(rank)
@@ -160,16 +178,15 @@ def run(rank, n_gpus, hps):
             800,
             900,
             1000,
-            # TPU v4-32에서는 더 작은 버킷만 사용하여 메모리 사용량 감소
-            # 1100,
-            # 1200,
-            # 1300,
-            # 1400,
-            # 1500,
-            # 1600,
-            # 1700,
-            # 1800,
-            # 1900,
+            1100,
+            1200,
+            1300,
+            1400,
+            1500,
+            1600,
+            1700,
+            1800,
+            1900,
         ],
         num_replicas=n_gpus,
         rank=rank,
@@ -177,23 +194,45 @@ def run(rank, n_gpus, hps):
     )
     collate_fn = TextAudioSpeakerCollate()
     # 데이터 로더 생성 - TPU에 최적화된 설정
-    train_loader = DataLoader(
-        train_dataset,
-        num_workers=0 if is_tpu_available() else 6,  # TPU에서는 worker 사용 안함
-        shuffle=False,
-        pin_memory=False if is_tpu_available() else True,  # TPU에서는 pin_memory 사용 안함
-        collate_fn=collate_fn,
-        batch_sampler=train_sampler,
-        persistent_workers=False if is_tpu_available() else True,  # TPU에서는 persistent_workers 사용 안함
-        prefetch_factor=None if is_tpu_available() else 4,
-    )
+    if is_tpu_available():
+        import torch_xla.core.xla_model as xm
+        xm.master_print("TPUv4 최적화 데이터 로더 설정 적용 중...")
+        train_loader = DataLoader(
+            train_dataset,
+            num_workers=TPU_OPTIMIZED_KWARGS['num_workers'],  # TPUv4 최적화 설정 적용
+            shuffle=False,
+            pin_memory=False,  # TPU에서는 pin_memory 사용 안함
+            collate_fn=collate_fn,
+            batch_sampler=train_sampler,
+            persistent_workers=TPU_OPTIMIZED_KWARGS['persistent_workers'],  # TPUv4 최적화 설정 적용
+            prefetch_factor=TPU_OPTIMIZED_KWARGS['prefetch_factor'],  # TPUv4 최적화 설정 적용
+        )
+    else:
+        train_loader = DataLoader(
+            train_dataset,
+            num_workers=6,
+            shuffle=False,
+            pin_memory=True,
+            collate_fn=collate_fn,
+            batch_sampler=train_sampler,
+            persistent_workers=True,
+            prefetch_factor=4,
+        )
     
     # TPU용 병렬 로더 생성 (슬라이싱 환경에 최적화)
     if is_tpu_available():
-        logging.info("TPU 슬라이싱 환경에 최적화된 데이터 로더를 설정합니다.")
+        import torch_xla.core.xla_model as xm
+        xm.master_print("TPU 슬라이싱 환경에 최적화된 데이터 로더를 설정합니다.")
         # 개선된 병렬 로더 함수 사용 (드롭 마지막 배치 옵션 추가)
         import torch_xla.distributed.parallel_loader as pl
-        train_loader = pl.MpDeviceLoader(train_loader, device)
+        train_loader = pl.MpDeviceLoader(
+            train_loader, 
+            device,
+            loader_prefetch_size=TPU_OPTIMIZED_KWARGS['loader_prefetch_size'],
+            device_prefetch_size=TPU_OPTIMIZED_KWARGS['device_prefetch_size'],
+            host_to_device_transfer_threads=TPU_OPTIMIZED_KWARGS['host_to_device_transfer_threads']
+        )
+        xm.master_print(f"TPUv4 최적화 병렬 로더 설정 완료: {TPU_OPTIMIZED_KWARGS}")
     # if rank == 0:
     #     eval_dataset = TextAudioSpeakerLoader(hps.data.validation_files, hps.data, val=True)
     #     eval_loader = DataLoader(eval_dataset, num_workers=0, shuffle=False,
@@ -362,10 +401,20 @@ def run(rank, n_gpus, hps):
 
     scaler = GradScaler(enabled=hps.train.fp16_run)
 
-    print("start training from epoch %s" % epoch_str)
+    if is_tpu_available():
+        import torch_xla.core.xla_model as xm
+        xm.master_print(f"에포크 {epoch_str}부터 학습 시작")
+    else:
+        print("start training from epoch %s" % epoch_str)
+        
     for epoch in range(epoch_str, hps.train.epochs + 1):
         if rank == 0:
-            print('device Check')
+            if is_tpu_available():
+                import torch_xla.core.xla_model as xm
+                xm.master_print(f"에포크 {epoch}: 디바이스 확인 - {device}")
+            else:
+                print('device Check')
+                
             train_and_evaluate(
                 rank,
                 epoch,
@@ -394,7 +443,18 @@ def run(rank, n_gpus, hps):
             )
         scheduler_g.step()
         scheduler_d.step()
-    print("training done")
+        
+        # 에포크 종료 후 TPU 메모리 최적화
+        if is_tpu_available():
+            import torch_xla.core.xla_model as xm
+            optimize_tpu_memory()
+            xm.master_print(f"에포크 {epoch} 완료: 메모리 최적화 수행")
+            
+    if is_tpu_available():
+        import torch_xla.core.xla_model as xm
+        xm.master_print("학습 완료")
+    else:
+        print("training done")
 
 def set_loader_epoch(loader, epoch):
     if hasattr(loader, "batch_sampler") and hasattr(loader.batch_sampler, "set_epoch"):
@@ -412,17 +472,28 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
     # TPU v4-32 메모리 최적화
     if is_tpu_available():
+        import torch_xla.core.xla_model as xm
         from GPT_SoVITS.utils_tpu import optimize_tpu_memory, sync_tpu_cores
         optimize_tpu_memory()
-        logging.info("TPU v4-32 메모리 최적화를 수행했습니다.")
+        xm.master_print(f"에포크 {epoch}: TPU v4-32 메모리 최적화를 수행했습니다.")
 
     set_loader_epoch(train_loader, epoch)
     global global_step
 
-    print("preparing gan training")
+    if is_tpu_available():
+        import torch_xla.core.xla_model as xm
+        xm.master_print(f"에포크 {epoch}: GAN 학습 준비 중...")
+    else:
+        print("preparing gan training")
+        
     net_g.train()
     net_d.train()
-    print("start training")
+    
+    if is_tpu_available():
+        import torch_xla.core.xla_model as xm
+        xm.master_print(f"에포크 {epoch}: 학습 시작")
+    else:
+        print("start training")
     # TPU v4-32에서 메모리 문제 방지를 위한 배치 처리 개선
     memory_error_count = 0
     max_memory_errors = 3
@@ -459,9 +530,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 optimize_tpu_memory()
             # 데이터를 적절한 디바이스로 이동 (TPU v4-32 최적화)
             if is_tpu_available():
-                # 디버그 정보 제거 (메모리 절약)
-                # print('TPU check devices')
-                # print(ssl.device, spec.device, spec_lengths.device, y.device, y_lengths.device, ssl.device, text.device, text_lengths.device)
                 from GPT_SoVITS.utils_tpu import move_to_device, get_xla_device, sync_tpu_cores
                 device = get_xla_device()
                 
@@ -551,7 +619,11 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         # TPU에서 그래디언트 동기화 및 메모리 최적화
         if is_tpu_available():
             import torch_xla.core.xla_model as xm
+            # 그래디언트 계산 후 동기화 (중요)
             xm.mark_step()
+            
+            # 메모리 최적화를 위한 가비지 컬렉션
+            gc.collect()
         
         scaler.unscale_(optim_d)
         grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
@@ -560,7 +632,12 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         # TPU에서 옵티마이저 스텝 후 동기화 (중요)
         if is_tpu_available():
             import torch_xla.core.xla_model as xm
+            # 옵티마이저 스텝 후 동기화 (중요)
             xm.mark_step()
+            
+            # 배치 진행 상황 로깅 (주기적으로)
+            if batch_idx % 10 == 0:
+                xm.master_print(f"에포크 {epoch}, 배치 {batch_idx}/{len(train_loader)}: 판별자 학습 완료")
         
         # TPU에서 메모리 정리
         if is_tpu_available():
@@ -586,7 +663,11 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         # TPU에서 그래디언트 동기화 및 메모리 최적화
         if is_tpu_available():
             import torch_xla.core.xla_model as xm
+            # 그래디언트 계산 후 동기화 (중요)
             xm.mark_step()
+            
+            # 메모리 최적화를 위한 가비지 컬렉션
+            gc.collect()
         
         scaler.unscale_(optim_g)
         grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
@@ -596,11 +677,20 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         # TPU에서 옵티마이저 스텝 후 동기화 (중요)
         if is_tpu_available():
             import torch_xla.core.xla_model as xm
+            # 옵티마이저 스텝 후 동기화 (중요)
             xm.mark_step()
+            
+            # 배치 진행 상황 로깅 (주기적으로)
+            if batch_idx % 10 == 0:
+                xm.master_print(f"에포크 {epoch}, 배치 {batch_idx}/{len(train_loader)}: 생성자 학습 완료")
+                
             # 배치 처리 후 메모리 최적화
             gc.collect()
-            from GPT_SoVITS.utils_tpu import optimize_tpu_memory
-            optimize_tpu_memory()
+            
+            # 주기적으로 메모리 최적화 수행
+            if batch_idx % 50 == 0:
+                optimize_tpu_memory()
+                xm.master_print(f"에포크 {epoch}, 배치 {batch_idx}: 메모리 최적화 수행")
         
         # TPU에서 메모리 정리
         if is_tpu_available():
@@ -688,20 +778,23 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             import torch_xla.core.xla_model as xm
             if "memory" in str(e).lower() or "out of memory" in str(e).lower():
                 memory_error_count += 1
-                logging.error(f"TPU 메모리 오류 발생 ({memory_error_count}/{max_memory_errors}): {str(e)}")
+                xm.master_print(f"TPU 메모리 오류 발생 ({memory_error_count}/{max_memory_errors}): {str(e)}")
                 
                 # 메모리 정리
                 gc.collect()
-                from GPT_SoVITS.utils_tpu import optimize_tpu_memory
                 optimize_tpu_memory()
                 
                 # 메모리 오류가 지속되면 배치 크기 감소 시도
                 if memory_error_count >= max_memory_errors and rank == 0:
-                    logging.warning("지속적인 TPU 메모리 오류로 인해 배치 크기를 줄이는 것을 고려하세요.")
-                    logging.warning("config.json 파일에서 'batch_size' 값을 절반으로 줄이고 다시 시도하세요.")
+                    xm.master_print("지속적인 TPU 메모리 오류로 인해 배치 크기를 줄이는 것을 고려하세요.")
+                    xm.master_print("config.json 파일에서 'batch_size' 값을 절반으로 줄이고 다시 시도하세요.")
+                    
+                # TPU 코어 동기화 강제 수행
+                xm.mark_step()
+                sync_tpu_cores()
             else:
                 # 기타 오류 처리
-                logging.error(f"학습 중 오류 발생: {str(e)}")
+                xm.master_print(f"학습 중 오류 발생: {str(e)}")
         else:
             # 비-TPU 환경에서의 오류 처리
             logging.error(f"학습 중 오류 발생: {str(e)}")
@@ -777,7 +870,6 @@ def evaluate(hps, generator, eval_loader, writer_eval):
     generator.eval()
     image_dict = {}
     audio_dict = {}
-    print("Evaluating ...")
     with torch.no_grad():
         for batch_idx, (
             ssl,
@@ -789,7 +881,6 @@ def evaluate(hps, generator, eval_loader, writer_eval):
             text,
             text_lengths,
         ) in enumerate(eval_loader):
-            print(111)
             if torch.cuda.is_available():
                 spec, spec_lengths = spec.cuda(), spec_lengths.cuda()
                 y, y_lengths = y.cuda(), y_lengths.cuda()
@@ -875,4 +966,22 @@ def evaluate(hps, generator, eval_loader, writer_eval):
 
 
 if __name__ == "__main__":
+    # start logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler("train.log"),
+            logging.StreamHandler(),
+        ],  # 파일과 콘솔에 동시에 로깅
+    )
+    
+    # TPU 환경 확인 및 로깅
+    if is_tpu_available():
+        import torch_xla.core.xla_model as xm
+        xm.master_print("=== GPT-SoVITS 학습 시작 (TPUv4 최적화 모드) ===")
+        xm.master_print(f"TPUv4 최적화 설정: {TPU_OPTIMIZED_KWARGS}")
+    else:
+        print("=== GPT-SoVITS 학습 시작 ===")
+        
     main()

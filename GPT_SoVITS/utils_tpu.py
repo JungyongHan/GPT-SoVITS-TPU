@@ -198,6 +198,76 @@ def create_tpu_data_sampler(dataset, batch_size, rank=None, world_size=None, shu
 
 # TPU v4-32 메모리 최적화 함수 추가
 def optimize_tpu_memory():
+    """TPU 메모리를 최적화합니다."""
+    if not is_tpu_available():
+        return False
+    
+    # 가비지 컬렉션 강제 실행
+    gc.collect()
+    
+    # TPU 메모리 정리
+    import torch_xla.core.xla_model as xm
+    xm.mark_step()
+    
+    try:
+        # 불필요한 텐서 캐시 정리
+        torch.cuda.empty_cache() if torch.cuda.is_available() else None
+        
+        # 메모리 통계 로깅 (디버깅용)
+        import torch_xla.debug.metrics as met
+        if xm.get_ordinal() == 0 and xm.xrt_world_size() > 1:
+            memory_stats = met.metric_data('MemoryStats')
+            if memory_stats:
+                logging.debug(f"TPU 메모리 사용량: {memory_stats}")
+                
+        # 메모리 사용량 제한 설정 (TPU v4-32에 최적화)
+        try:
+            # 메모리 사용량을 85%로 제한하여 OOM 방지
+            met.set_memory_fraction(0.85)
+        except:
+            pass
+    except Exception as e:
+        logging.debug(f"TPU 메모리 최적화 중 오류 발생: {e}")
+    
+    return True
+
+# TPU 환경에서 복소수 텐서 처리를 위한 유틸리티 함수
+def tpu_safe_stft(y, n_fft, hop_length, win_length, window, center=False, pad_mode='reflect', normalized=False, onesided=True):
+    """
+    TPU 환경에서 안전하게 STFT를 수행하는 함수입니다.
+    view_as_complex_copy 연산을 사용하지 않고 실수 텐서로 처리합니다.
+    """
+    # TPU 환경에서는 return_complex=False로 설정하여 실수 텐서 반환
+    spec = torch.stft(y, n_fft, hop_length=hop_length, win_length=win_length, window=window,
+                     center=center, pad_mode=pad_mode, normalized=normalized, onesided=onesided)
+    
+    # 실수부와 허수부 분리
+    spec_real, spec_imag = spec[..., 0], spec[..., 1]
+    
+    # 파워 스펙트럼 계산 (실수부^2 + 허수부^2)
+    power_spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-8)
+    
+    return power_spec
+
+# TPU 환경에서 복소수 텐서 처리를 위한 안전한 mel 스펙트로그램 생성 함수
+def tpu_safe_mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax, mel_basis, hann_window, center=False):
+    """
+    TPU 환경에서 안전하게 mel 스펙트로그램을 생성하는 함수입니다.
+    view_as_complex_copy 연산을 사용하지 않고 실수 텐서로 처리합니다.
+    """
+    # 패딩 적용
+    y = torch.nn.functional.pad(y.unsqueeze(1), (int((n_fft-hop_size)/2), int((n_fft-hop_size)/2)), mode='reflect')
+    y = y.squeeze(1)
+    
+    # TPU 안전 STFT 사용
+    spec = tpu_safe_stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window,
+                        center=center, pad_mode='reflect', normalized=False, onesided=True)
+    
+    # mel 변환 및 정규화
+    spec = torch.matmul(mel_basis, spec)
+    spec = torch.log(torch.clamp(spec, min=1e-5) * 1.0)
+    
+    return spec
     """TPU v4-32 메모리 사용량을 최적화합니다."""
     if not is_tpu_available():
         return
