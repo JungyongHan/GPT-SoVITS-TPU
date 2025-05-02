@@ -46,6 +46,7 @@ from module.data_utils import (
     TextAudioSpeakerCollate,
     TextAudioSpeakerLoader,
 )
+from module.mel_processing import mel_spectrogram_torch, spec_to_mel_torch
 from module.losses import discriminator_loss, feature_loss, generator_loss, kl_loss
 # TPU 환경에서는 TPU 호환 버전의 mel_processing 모듈 사용
 
@@ -452,11 +453,7 @@ def _train_update(device, epoch, step, total_step, loss, tracker, writer):
 
 
 def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loaders, logger, writers):
-    if is_tpu_available():
-        from module.mel_processing_tpu import mel_spectrogram_torch, spec_to_mel_torch
-        logging.info("TPU 호환 mel_processing 모듈을 사용합니다.")
-    else:
-        from module.mel_processing import mel_spectrogram_torch, spec_to_mel_torch
+        
     net_g, net_d = nets
     optim_g, optim_d = optims
     # scheduler_g, scheduler_d = schedulers

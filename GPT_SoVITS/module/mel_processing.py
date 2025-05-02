@@ -52,20 +52,9 @@ def spectrogram_torch(y, n_fft, sampling_rate, hop_size, win_size, center=False)
     y = torch.nn.functional.pad(y.unsqueeze(1), (int((n_fft-hop_size)/2), int((n_fft-hop_size)/2)), mode='reflect')
     y = y.squeeze(1)
     
-    # TPU 호환성을 위한 STFT 처리 수정
-    import sys, os
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from GPT_SoVITS.utils_tpu import is_tpu_available, tpu_safe_stft
-    
-    if is_tpu_available():
-        # TPU 환경에서는 TPU 안전 STFT 함수 사용
-        spec = tpu_safe_stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[key],
-                          center=center, pad_mode='reflect', normalized=False, onesided=True)
-    else:
-        # GPU/CPU에서는 기존 방식 사용
-        spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[key],
-                          center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
-        spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-8)
+    spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[key],
+                        center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
+    spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-8)
     
     return spec
 
@@ -106,21 +95,9 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
     y = torch.nn.functional.pad(y.unsqueeze(1), (int((n_fft-hop_size)/2), int((n_fft-hop_size)/2)), mode='reflect')
     y = y.squeeze(1)
     
-    # TPU 호환성을 위한 STFT 처리 수정
-    import sys
-    import os
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from GPT_SoVITS.utils_tpu import is_tpu_available, tpu_safe_stft
-    
-    if is_tpu_available():
-        # TPU 환경에서는 TPU 안전 STFT 함수 사용
-        spec = tpu_safe_stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
-                          center=center, pad_mode='reflect', normalized=False, onesided=True)
-    else:
-        # GPU/CPU에서는 기존 방식 사용
-        spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
-                          center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
-        spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-8)
+    spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
+                        center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
+    spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-8)
 
     spec = torch.matmul(mel_basis[fmax_dtype_device], spec)
     spec = spectral_normalize_torch(spec)

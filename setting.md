@@ -76,7 +76,35 @@ chmod +x ~/nfs_share/setup.sh
 nano ~/nfs_share/kill_proc.sh
 ```
 #!/bin/bash
-for i in {0..3}; do sudo lsof -w /dev/accel$i | grep python | awk '{print $2}'; done | sort -u | xargs sudo kill -9
+kill_processes_using_device() {
+    local device=$1
+    pids=$(sudo lsof $device | grep python | awk '{print $2}' | sort -u)
+    if [ -z "$pids" ]; then
+        return 0
+    fi
+    for pid in $pids; do
+        sudo kill -15 $pid
+        sleep 0.5
+        if ps -p $pid > /dev/null; then
+            echo "[$device] PID $pid 정상 종료 실패, 강제 종료 시도..."
+            sudo kill -9 $pid
+            sleep 1
+            
+            if ps -p $pid > /dev/null; then
+                echo "[$device] PID $pid 강제 종료 실패!"
+            else
+                echo "[$device] PID $pid 강제 종료 성공!"
+            fi
+        else
+            echo "[$device] PID $pid 정상 종료 성공!"
+        fi
+    done
+}
+
+for i in {0..3}; do
+    device="/dev/accel$i"
+    kill_processes_using_device $device
+done
 ```
 chmod +x ~/nfs_share/kill_proc.sh
 ~/nfs_share/kill_proc.sh
