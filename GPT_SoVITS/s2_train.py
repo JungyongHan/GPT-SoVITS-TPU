@@ -19,9 +19,9 @@ import gc  # 가비지 컬렉션 추가
 TPU_OPTIMIZED_KWARGS = {
     'persistent_workers': True,
     'prefetch_factor': 32,
-    'loader_prefetch_size': 32,
+    'loader_prefetch_size': 128,
     'device_prefetch_size': 4,
-    'num_workers': 8,
+    'num_workers': 16,
     'host_to_device_transfer_threads': 4,
 }
 
