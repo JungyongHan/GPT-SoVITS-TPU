@@ -145,7 +145,6 @@ def run(rank, n_gpus, hps):
         # TPU는 XLA가 자동으로 처리
         import torch_xla.core.xla_model as xm
         device = xm.xla_device()
-        rank = xm.get_ordinal() % n_gpus
 
     elif torch.cuda.is_available():
         torch.cuda.set_device(rank)
@@ -189,9 +188,10 @@ def run(rank, n_gpus, hps):
             1900,
         ],
         num_replicas=n_gpus,
-        rank=rank,
+        rank=rank % n_gpus if is_tpu_available() else rank,
         shuffle=True,
     )
+    
     collate_fn = TextAudioSpeakerCollate()
     # 데이터 로더 생성 - TPU에 최적화된 설정
     if is_tpu_available():
