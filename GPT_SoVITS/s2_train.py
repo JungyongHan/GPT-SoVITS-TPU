@@ -83,9 +83,7 @@ def main():
             # TPU 코어 수 확인
             from GPT_SoVITS.utils_tpu import get_tpu_cores_count
             num_cores = get_tpu_cores_count()  # 자동으로 TPU 코어 수 감지
-            import torch_xla.core.xla_model as xm
-            xm.master_print(f"사용 가능한 TPU 코어 수: {num_cores}")
-            xm.master_print(f"TPUv4 최적화 설정 적용 중...")
+
             
             # TPU v4-32 메모리 최적화 설정
             os.environ['PJRT_DEVICE'] = 'TPU'
@@ -95,7 +93,7 @@ def main():
             os.environ['XLA_EXPERIMENTAL_ASYNC_COMPILATION'] = '1'  # 비동기 컴파일 활성화
             
             # TPU용 멀티프로세싱 실행 (코어 수에 맞게 설정)
-            xm.master_print(f"TPU 멀티프로세싱 시작 (코어 수: {num_cores})")
+            # xmp.spawn 이전에 xm.xla_device 호출하면 안됌.
             xmp.spawn(run, args=(num_cores, hps), nprocs=num_cores)
             return
     
@@ -191,7 +189,7 @@ def run(rank, n_gpus, hps):
         rank=rank % n_gpus if is_tpu_available() else rank,
         shuffle=True,
     )
-    
+
     collate_fn = TextAudioSpeakerCollate()
     # 데이터 로더 생성 - TPU에 최적화된 설정
     if is_tpu_available():
