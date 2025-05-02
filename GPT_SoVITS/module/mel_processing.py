@@ -53,7 +53,7 @@ def spectrogram_torch(y, n_fft, sampling_rate, hop_size, win_size, center=False)
     y = y.squeeze(1)
     
     # TPU 호환성을 위한 STFT 처리 수정
-    import sys
+    import sys, os
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from GPT_SoVITS.utils_tpu import is_tpu_available, tpu_safe_stft
     
