@@ -484,25 +484,13 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     max_memory_errors = 3
     tracker = None
     # TPU에서 XLA 컴파일러 최적화 설정
-    if is_tpu_available():
-        # XLA 컴파일 옵션 설정 - 더 작은 그룹 크기로 메모리 사용량 감소
-        try:
-            # 최신 버전의 torch_xla에서는 다른 방식으로 최적화 설정을 적용
-            import torch_xla.core.xla_model as xm
-            # 메모리 최적화 설정 (set_lowering_options 대신 사용)
-            xm.mark_step()
-            tracker = xm.RateTracker()
-            logging.info("TPU 환경에서 XLA 메모리 최적화를 활성화했습니다.")
-        except Exception as e:
-            logging.warning(f"TPU 최적화 설정 중 오류 발생: {str(e)}")
-            logging.info("기본 TPU 설정으로 계속 진행합니다.")
     
     try:
         for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
             if is_tpu_available():
                 from GPT_SoVITS.utils_tpu import move_to_device, get_xla_device, sync_tpu_cores
                 device = get_xla_device()
-                
+                tracker = xm.RateTracker()
                 # 메모리 최적화: 한 번에 하나씩 텐서 이동 및 불필요한 참조 제거
                 spec = move_to_device(spec, device)
                 spec_lengths = move_to_device(spec_lengths, device)
@@ -559,12 +547,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 ssl.requires_grad = False
                 # ssl_lengths = ssl_lengths.cuda(rank, non_blocking=True)
                 text, text_lengths = text.to(device), text_lengths.to(device)
-
-                spec, spec_lengths = spec.to(device, non_blocking=True), spec_lengths.to(device, non_blocking=True)
-                y, y_lengths = y.to(device, non_blocking=True), y_lengths.to(device, non_blocking=True)
-                ssl = ssl.to(device, non_blocking=True)
-                ssl.requires_grad = False
-                text, text_lengths = text.to(device, non_blocking=True), text_lengths.to(device, non_blocking=True)
             
             with autocast(enabled=hps.train.fp16_run):
                 (
