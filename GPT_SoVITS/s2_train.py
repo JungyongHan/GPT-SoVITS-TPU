@@ -195,21 +195,7 @@ def run(rank, n_gpus, hps):
     #     eval_dataset = TextAudioSpeakerLoader(hps.data.validation_files, hps.data, val=True)
     #     eval_loader = DataLoader(eval_dataset, num_workers=0, shuffle=False,
     #                              batch_size=1, pin_memory=True,
-    #                              drop_last=False, collate_fn=collate_fn)
-
-    # 모델 생성 및 디바이스 배치 (TPU v4-32 최적화)
-    if is_tpu_available():
-        # TPU v4-32에서 XLA 컴파일 최적화 활성화
-        # import torch_xla.core.xla_model as xm
-        # import torch_xla.core.xla_builder as xb
-        
-        # # XLA 컴파일 옵션 설정
-        # xb.set_lowering_options("max_group_size=8,min_group_size=1")
-        # logging.info("TPU v4-32 환경에서 XLA 컴파일 최적화를 활성화했습니다.")
-        
-        # 메모리 최적화를 위한 가비지 컬렉션
-        gc.collect()
-    
+    #                              drop_last=False, collate_fn=collate_fn)    
     # 모델 생성
     net_g = SynthesizerTrn(
         hps.data.filter_length // 2 + 1,
@@ -221,18 +207,6 @@ def run(rank, n_gpus, hps):
     net_d = MultiPeriodDiscriminator(hps.model.use_spectral_norm)
     
     # TPU v4-32에서 메모리 최적화 기법 적용
-    if is_tpu_available():
-        # 그래디언트 체크포인팅 활성화 (모든 가능한 모듈에 적용)
-        net_g.enc_p.encoder.gradient_checkpointing_enable()
-        if hasattr(net_g.dec, 'gradient_checkpointing_enable'):
-            net_g.dec.gradient_checkpointing_enable()
-        if hasattr(net_g.enc_q, 'gradient_checkpointing_enable'):
-            net_g.enc_q.gradient_checkpointing_enable()
-        
-        # 메모리 효율적인 어텐션 사용
-        torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=True)
-        
-        logging.info("TPU v4-32 환경에서 메모리 최적화 기법을 적용했습니다.")
     
     # 적절한 디바이스로 모델 이동
     net_g = net_g.to(device)
