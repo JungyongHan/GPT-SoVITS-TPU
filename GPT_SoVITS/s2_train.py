@@ -19,8 +19,8 @@ import gc  # 가비지 컬렉션 추가
 TPU_OPTIMIZED_KWARGS = {
     'persistent_workers': True,
     'prefetch_factor': 32,
-    'loader_prefetch_size': 128,
-    'device_prefetch_size': 1,
+    'loader_prefetch_size': 32,
+    'device_prefetch_size': 4,
     'num_workers': 4,
     'host_to_device_transfer_threads': 4,
 }
@@ -177,8 +177,6 @@ def run(rank, n_gpus, hps):
     collate_fn = TextAudioSpeakerCollate()
     # 데이터 로더 생성 - TPU에 최적화된 설정
     if is_tpu_available():
-        import torch_xla.core.xla_model as xm
-        xm.master_print("TPUv4 최적화 데이터 로더 설정 적용 중...")
         train_loader = DataLoader(
             train_dataset,
             num_workers=TPU_OPTIMIZED_KWARGS['num_workers'],  # TPUv4 최적화 설정 적용
@@ -203,8 +201,6 @@ def run(rank, n_gpus, hps):
     
     # TPU용 병렬 로더 생성 (슬라이싱 환경에 최적화)
     if is_tpu_available():
-        import torch_xla.core.xla_model as xm
-        xm.master_print("TPU 슬라이싱 환경에 최적화된 데이터 로더를 설정합니다.")
         # 개선된 병렬 로더 함수 사용 (드롭 마지막 배치 옵션 추가)
         import torch_xla.distributed.parallel_loader as pl
         train_loader = pl.MpDeviceLoader(
