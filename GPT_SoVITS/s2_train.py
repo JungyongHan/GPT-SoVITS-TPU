@@ -463,8 +463,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     if writers is not None:
         writer, writer_eval = writers
 
-    if hasattr(loader, "batch_sampler") and hasattr(loader.batch_sampler, "set_epoch"):
-        loader.batch_sampler.set_epoch(epoch)
+    if hasattr(train_loader, "batch_sampler") and hasattr(train_loader.batch_sampler, "set_epoch"):
+        train_loader.batch_sampler.set_epoch(epoch)
     global global_step
 
     if is_tpu_available():
