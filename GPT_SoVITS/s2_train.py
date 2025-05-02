@@ -193,7 +193,7 @@ def run(rank, n_gpus, hps):
         logging.info("TPU 슬라이싱 환경에 최적화된 데이터 로더를 설정합니다.")
         # 개선된 병렬 로더 함수 사용 (드롭 마지막 배치 옵션 추가)
         import torch_xla.distributed.parallel_loader as pl
-        train_loader = pl.MpDeviceLoader(train_loader, device, drop_last=True)
+        train_loader = pl.MpDeviceLoader(train_loader, device)
     # if rank == 0:
     #     eval_dataset = TextAudioSpeakerLoader(hps.data.validation_files, hps.data, val=True)
     #     eval_loader = DataLoader(eval_dataset, num_workers=0, shuffle=False,
