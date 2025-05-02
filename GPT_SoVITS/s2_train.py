@@ -200,12 +200,12 @@ def run(rank, n_gpus, hps):
     # 모델 생성 및 디바이스 배치 (TPU v4-32 최적화)
     if is_tpu_available():
         # TPU v4-32에서 XLA 컴파일 최적화 활성화
-        import torch_xla.core.xla_model as xm
-        import torch_xla.core.xla_builder as xb
+        # import torch_xla.core.xla_model as xm
+        # import torch_xla.core.xla_builder as xb
         
-        # XLA 컴파일 옵션 설정
-        xb.set_lowering_options("max_group_size=8,min_group_size=1")
-        logging.info("TPU v4-32 환경에서 XLA 컴파일 최적화를 활성화했습니다.")
+        # # XLA 컴파일 옵션 설정
+        # xb.set_lowering_options("max_group_size=8,min_group_size=1")
+        # logging.info("TPU v4-32 환경에서 XLA 컴파일 최적화를 활성화했습니다.")
         
         # 메모리 최적화를 위한 가비지 컬렉션
         gc.collect()
