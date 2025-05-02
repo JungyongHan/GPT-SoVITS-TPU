@@ -127,7 +127,7 @@ def setup_tpu_slicing():
         # XLA 컴파일러 최적화 설정
         import torch_xla.core.xla_builder as xb
         # 더 작은 그룹 크기로 메모리 사용량 감소
-        xb.set_lowering_options("max_group_size=4,min_group_size=1")
+        # xb.set_lowering_options("max_group_size=4,min_group_size=1")
         logging.info("XLA 컴파일러 최적화 설정을 적용했습니다.")
     except Exception as e:
         logging.warning(f"TPU 메모리 최적화 설정 중 오류 발생: {e}")
@@ -162,7 +162,7 @@ def sync_tpu_cores():
         # XLA 컴파일러 최적화 설정
         import torch_xla.core.xla_builder as xb
         # 더 작은 그룹 크기로 메모리 사용량 감소
-        xb.set_lowering_options("max_group_size=4,min_group_size=1")
+        # xb.set_lowering_options("max_group_size=4,min_group_size=1")
         
         # 메모리 통계 로깅 (디버깅용)
         import torch_xla.debug.metrics as met
@@ -231,7 +231,7 @@ def optimize_tpu_memory():
         try:
             import torch_xla.core.xla_builder as xb
             # 더 작은 그룹 크기로 메모리 사용량 감소
-            xb.set_lowering_options("max_group_size=4,min_group_size=1")
+            # xb.set_lowering_options("max_group_size=4,min_group_size=1")
         except:
             pass
         

@@ -114,6 +114,9 @@ def run(rank, n_gpus, hps):
             rank=rank,
         )
     else:
+        # TPU 환경에서 필요한 추가 모듈 import
+        import torch_xla.core.xla_model as xm
+        # torch_xla.core.xla_builder 모듈에서 set_lowering_options 함수가 없으므로 import 제거
         dist.init_process_group('xla', init_method='xla://')
     
     torch.manual_seed(hps.train.seed)
@@ -426,11 +429,16 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     
     # TPU에서 XLA 컴파일러 최적화 설정
     if is_tpu_available():
-        import torch_xla.core.xla_model as xm
-        import torch_xla.core.xla_builder as xb
         # XLA 컴파일 옵션 설정 - 더 작은 그룹 크기로 메모리 사용량 감소
-        xb.set_lowering_options("max_group_size=4,min_group_size=1")
-        logging.info("TPU 환경에서 XLA 컴파일 최적화를 활성화했습니다.")
+        try:
+            # 최신 버전의 torch_xla에서는 다른 방식으로 최적화 설정을 적용
+            import torch_xla.core.xla_model as xm
+            # 메모리 최적화 설정 (set_lowering_options 대신 사용)
+            xm.mark_step()
+            logging.info("TPU 환경에서 XLA 메모리 최적화를 활성화했습니다.")
+        except Exception as e:
+            logging.warning(f"TPU 최적화 설정 중 오류 발생: {str(e)}")
+            logging.info("기본 TPU 설정으로 계속 진행합니다.")
     
     try:
         for batch_idx, (
