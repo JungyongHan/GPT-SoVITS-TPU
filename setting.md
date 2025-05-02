@@ -76,20 +76,21 @@ chmod +x ~/nfs_share/setup.sh
 nano ~/nfs_share/kill_proc.sh
 ```
 #!/bin/bash
+
 kill_processes_using_device() {
     local device=$1
-    pids=$(sudo lsof $device | grep python | awk '{print $2}' | sort -u)
+    pids=$(sudo lsof $device 2>/dev/null | grep python | awk '{print $2}' | sort -u)
     if [ -z "$pids" ]; then
         return 0
     fi
     for pid in $pids; do
+        echo "[$device] PID $pid 종료 시도..."
         sudo kill -15 $pid
         sleep 0.5
         if ps -p $pid > /dev/null; then
             echo "[$device] PID $pid 정상 종료 실패, 강제 종료 시도..."
             sudo kill -9 $pid
             sleep 1
-            
             if ps -p $pid > /dev/null; then
                 echo "[$device] PID $pid 강제 종료 실패!"
             else
@@ -101,10 +102,36 @@ kill_processes_using_device() {
     done
 }
 
+# /dev/accel0~3 사용하는 python 프로세스 종료
 for i in {0..3}; do
     device="/dev/accel$i"
     kill_processes_using_device $device
 done
+
+# venv/bin/python 모든 프로세스 종료
+venv_pids=$(ps -ef | grep venv/bin/python | grep -v grep | awk '{print $2}' | sort -u)
+if [ -n "$venv_pids" ]; then
+    for pid in $venv_pids; do
+        if ! ps -p $pid > /dev/null; then
+            continue
+        fi
+        echo "[venv/bin/python] PID $pid 종료 시도..."
+        sudo kill -15 $pid
+        sleep 0.5
+        if ps -p $pid > /dev/null; then
+            sudo kill -9 $pid
+            sleep 1
+            if ps -p $pid > /dev/null; then
+                echo "[venv/bin/python] PID $pid 강제 종료 실패!"
+            else
+                echo "[venv/bin/python] PID $pid 강제 종료 성공!"
+            fi
+        else
+            echo "[venv/bin/python] PID $pid 정상 종료 성공!"
+        fi
+    done
+fi
+
 ```
 chmod +x ~/nfs_share/kill_proc.sh
 ~/nfs_share/kill_proc.sh
