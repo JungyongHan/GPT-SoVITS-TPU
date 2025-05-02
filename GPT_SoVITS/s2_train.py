@@ -360,7 +360,6 @@ def run(rank, n_gpus, hps):
     scaler = GradScaler(enabled=hps.train.fp16_run)
 
     print("start training from epoch %s" % epoch_str)
-    print(net_g.device, net_d.device, device, optim_g.device, optim_d.device, scaler.device, train_loader.device)
     for epoch in range(epoch_str, hps.train.epochs + 1):
         if rank == 0:
             print('device Check')
