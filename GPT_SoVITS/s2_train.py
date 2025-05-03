@@ -421,6 +421,7 @@ def run(rank, n_gpus, hps):
         print("training done")
 
 def _get_device_spec(device):
+    import torch_xla.runtime as xr
     ordinal = xr.global_ordinal()
     return str(device) if ordinal < 0 else '{}/{}'.format(device, ordinal)
 def _train_update(device, epoch, step, total_step, loss, tracker, writer):
