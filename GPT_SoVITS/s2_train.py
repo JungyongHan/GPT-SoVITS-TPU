@@ -16,11 +16,11 @@ import logging
 
 # TPUv4 최적화 설정
 TPU_OPTIMIZED_KWARGS = {
-    'persistent_workers': False,
+    'persistent_workers': True,
     'prefetch_factor': 32,
     'loader_prefetch_size': 128,
     'device_prefetch_size': 1,
-    'num_workers': 6,
+    'num_workers': 12,
     'host_to_device_transfer_threads': 4,
 }
 
@@ -121,7 +121,10 @@ def run(rank, n_gpus, hps):
     
     # 디바이스 설정
     if is_tpu_available():
+        import torch_xla.distributed.xla_backend
+        import torch_xla.distributed.parallel_loader as pl
         import torch_xla.core.xla_model as xm
+        from torch_xla import runtime as xr
         device = xm.xla_device()
 
     elif torch.cuda.is_available():
@@ -136,9 +139,8 @@ def run(rank, n_gpus, hps):
     
     # TPU v4-32에 최적화된 배치 크기 계산
     if is_tpu_available():
-        from torch_xla import runtime as xr
         effective_batch_size = max(1, hps.train.batch_size // 2)
-        logging.info(f"TPU v4-32 환경에 최적화된 배치 크기 사용: {effective_batch_size}")
+        xm.master_print(f"TPU v4-32 환경에 최적화된 배치 크기 사용: {effective_batch_size}")
         n_gpus = xr.world_size()
         rank = xr.global_ordinal()
         
@@ -175,21 +177,17 @@ def run(rank, n_gpus, hps):
 
     collate_fn = TextAudioSpeakerCollate()
     # 데이터 로더 생성 - TPU에 최적화된 설정
-    if is_tpu_available():    
-        import torch_xla.distributed.xla_backend
-        import torch_xla.distributed.parallel_loader as pl
-        num_workers = 2
-        
+    if is_tpu_available():   
         train_loader = DataLoader(
             train_dataset,
             batch_size=effective_batch_size,
             collate_fn=collate_fn,
             batch_sampler=train_sampler,
             shuffle=False,
-            num_workers=num_workers, # 동적으로 설정된 num_workers 사용
+            num_workers=TPU_OPTIMIZED_KWARGS['num_workers'], # 동적으로 설정된 num_workers 사용
             persistent_workers=True, # TPU 환경에서는 True 권장
             prefetch_factor=TPU_OPTIMIZED_KWARGS['prefetch_factor'], # 기존 값 유지 또는 조정
-            pin_memory=False # TPU에서는 False 권장
+            pin_memory=True
         )
         train_loader = pl.MpDeviceLoader(
             train_loader, 
@@ -377,7 +375,6 @@ def run(rank, n_gpus, hps):
         scaler = GradScaler(enabled=hps.train.fp16_run)
 
     if is_tpu_available():
-        import torch_xla.core.xla_model as xm
         xm.master_print(f"에포크 {epoch_str}부터 학습 시작")
     else:
         print("start training from epoch %s" % epoch_str)
@@ -414,7 +411,6 @@ def run(rank, n_gpus, hps):
         scheduler_d.step()
             
     if is_tpu_available():
-        import torch_xla.core.xla_model as xm
         xm.master_print("학습 완료")
     else:
         print("training done")
@@ -452,6 +448,10 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     
     if is_tpu_available():
         import torch_xla.core.xla_model as xm
+        import torch_xla.distributed.xla_backend
+        import torch_xla.debug.metrics_compare_utils as mcu
+        import torch_xla.debug.metrics as met
+        from GPT_SoVITS.utils_tpu import move_to_device, get_xla_device, sync_tpu_cores
         xm.master_print(f"에포크 {epoch}: 학습 시작")
     else:
         print("start training")
@@ -464,8 +464,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     try:
         for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
             if is_tpu_available():
-                import torch_xla.distributed.xla_backend
-                from GPT_SoVITS.utils_tpu import move_to_device, get_xla_device, sync_tpu_cores
                 device = get_xla_device()
                 tracker = xm.RateTracker()
                 # 메모리 최적화: 한 번에 하나씩 텐서 이동 및 불필요한 참조 제거
@@ -547,11 +545,11 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             if scaler is None: # TPU
                 loss_disc_all.backward()
                 # TPU gradient clipping and optimizer step
-                grad_norm_d = xm.optimizer_step(optim_d, optimizer_args={'clipping_threshold': 1.0}) # Example threshold
+                xm.optimizer_step(optim_d)
             else: # GPU/CPU
                 scaler.scale(loss_disc_all).backward()
                 scaler.unscale_(optim_d)
-                grad_norm_d = commons.clip_grad_value_(net_d.parameters(), 1.0) # Example threshold
+                grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
                 scaler.step(optim_d)
                 
             with autocast(enabled=hps.train.fp16_run):
@@ -570,7 +568,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             if scaler is None: # TPU
                 loss_gen_all.backward()
                 # TPU gradient clipping and optimizer step
-                grad_norm_g = xm.optimizer_step(optim_g, optimizer_args={'clipping_threshold': 1.0}) # Example threshold
+                xm.optimizer_step(optim_g)
                 tracker.add(effective_batch_size) # Use effective_batch_size
                 # Use xm.add_step_closure for actions after optimizer step
                 # xm.add_step_closure(_train_update, args=(device, epoch, global_step, len(train_loader), loss_gen, tracker, writer))
@@ -578,7 +576,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             else: # GPU/CPU
                 scaler.scale(loss_gen_all).backward()
                 scaler.unscale_(optim_g)
-                grad_norm_g = commons.clip_grad_value_(net_g.parameters(), 1.0) # Example threshold
                 grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
                 scaler.step(optim_g)
                 scaler.update()
@@ -656,10 +653,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                             scalars=scalar_dict,
                         )
                     if is_tpu_available():
-                        import torch_xla.debug.metrics_compare_utils as mcu
-                        import torch_xla.debug.metrics as met
-                        import torch_xla.core.xla_model as xm
-
                         metrics = mcu.parse_metrics_report(met.metrics_report())
                         aten_ops_sum = 0
                         for metric_name, metric_value in metrics.items():
