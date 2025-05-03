@@ -77,7 +77,7 @@ def main():
         os.environ['PJRT_DEVICE'] = 'TPU'
         from GPT_SoVITS.utils_tpu import get_tpu_cores_count
         num_cores = get_tpu_cores_count()  # 자동으로 TPU 코어 수 감지
-        num_cores = 2
+
     
         
         print(f"TPU 멀티프로세싱 시작 (코어 수: {num_cores})")
@@ -142,7 +142,13 @@ def run(rank, n_gpus, hps):
     
     # TPU v4-32에 최적화된 배치 크기 계산
     if is_tpu_available():
+        import torch_xla.core.xla_model as xm
+        from torch_xla import runtime as xr
+        rank = xr.global_ordinal()
+        n_gpus = xm.xrt_world_size()
+        
         effective_batch_size = max(1, hps.train.batch_size // 2)
+        
         logging.info(f"TPU v4-32 환경에 최적화된 배치 크기 사용: {effective_batch_size}")
     else:
         effective_batch_size = hps.train.batch_size
@@ -171,7 +177,7 @@ def run(rank, n_gpus, hps):
             1900,
         ],
         num_replicas=n_gpus,
-        rank=rank % n_gpus if is_tpu_available() else rank,
+        rank=rank,
         shuffle=True,
     )
 
@@ -426,6 +432,8 @@ def _get_device_spec(device):
     import torch_xla.runtime as xr
     ordinal = xr.global_ordinal()
     return str(device) if ordinal < 0 else '{}/{}'.format(device, ordinal)
+
+
 def _train_update(device, epoch, step, total_step, loss, tracker, writer):
     rate = tracker.rate()
     global_rate = tracker.global_rate()
