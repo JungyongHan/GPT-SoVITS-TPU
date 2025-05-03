@@ -571,7 +571,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 xm.optimizer_step(optim_g)
                 tracker.add(effective_batch_size) # Use effective_batch_size
                 # Use xm.add_step_closure for actions after optimizer step
-                # xm.add_step_closure(_train_update, args=(device, epoch, global_step, len(train_loader), loss_gen, tracker, writer))
+                xm.add_step_closure(_train_update, args=(device, epoch, batch_idx, len(train_loader), loss_gen, tracker, writer))
                 xm.mark_step() # Mark step for XLA execution
             else: # GPU/CPU
                 scaler.scale(loss_gen_all).backward()
