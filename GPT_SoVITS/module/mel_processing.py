@@ -11,7 +11,7 @@ def is_tpu_available():
         return True
     except ImportError:
         return False
-
+IS_TPU=is_tpu_available()
 def dynamic_range_compression_torch(x, C=1, clip_val=1e-5):
     return torch.log(torch.clamp(x, min=clip_val) * C)
 
@@ -40,7 +40,7 @@ def spectrogram_torch(y, n_fft, sampling_rate, hop_size, win_size, center=False)
     key = "%s-%s-%s-%s-%s" %(dtype_device, n_fft, sampling_rate, hop_size, win_size)
     
     # TPU 환경에서는 매번 새로 생성하여 디바이스 일치 보장
-    if is_tpu_available() or key not in hann_window:
+    if key not in hann_window:
         hann_window[key] = torch.hann_window(win_size).to(dtype=y.dtype, device=y.device)
     
     # TPU에서는 window가 올바른 디바이스에 있는지 확인
@@ -51,7 +51,7 @@ def spectrogram_torch(y, n_fft, sampling_rate, hop_size, win_size, center=False)
     y = y.squeeze(1)
     
     # TPU 환경에서는 return_complex=True 사용 권장
-    if is_tpu_available():
+    if IS_TPU:
         spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[key],
                           center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=True)
         spec = torch.abs(spec)
@@ -68,7 +68,7 @@ def spec_to_mel_torch(spec, n_fft, num_mels, sampling_rate, fmin, fmax):
     key = "%s-%s-%s-%s-%s-%s"%(dtype_device, n_fft, num_mels, sampling_rate, fmin, fmax)
     
     # TPU 환경에서는 매번 새로 생성하거나 디바이스 확인
-    if is_tpu_available() or key not in mel_basis:
+    if key not in mel_basis:
         mel = librosa_mel_fn(sr=sampling_rate, n_fft=n_fft, n_mels=num_mels, fmin=fmin, fmax=fmax)
         mel_basis[key] = torch.from_numpy(mel).to(dtype=spec.dtype, device=spec.device)
     
@@ -91,11 +91,11 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
     fmax_dtype_device = "%s-%s-%s-%s-%s-%s-%s-%s"%(dtype_device, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax)
     
     # TPU 환경에서는 매번 새로 생성하거나 디바이스 확인
-    if is_tpu_available() or fmax_dtype_device not in mel_basis:
+    if fmax_dtype_device not in mel_basis:
         mel = librosa_mel_fn(sr=sampling_rate, n_fft=n_fft, n_mels=num_mels, fmin=fmin, fmax=fmax)
         mel_basis[fmax_dtype_device] = torch.from_numpy(mel).to(dtype=y.dtype, device=y.device)
     
-    if is_tpu_available() or fmax_dtype_device not in hann_window:
+    if fmax_dtype_device not in hann_window:
         hann_window[fmax_dtype_device] = torch.hann_window(win_size).to(dtype=y.dtype, device=y.device)
     
     # TPU에서는 텐서들이 올바른 디바이스에 있는지 확인
@@ -109,7 +109,7 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
     y = y.squeeze(1)
     
     # TPU 환경에서는 return_complex=True 사용 권장
-    if is_tpu_available():
+    if IS_TPU:
         spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[fmax_dtype_device],
                           center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=True)
         spec = torch.abs(spec)
