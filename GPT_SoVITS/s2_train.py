@@ -413,11 +413,6 @@ def run(rank, n_gpus, hps):
             )
         scheduler_g.step()
         scheduler_d.step()
-        
-        # 에포크 종료 후 TPU 메모리 최적화
-        if is_tpu_available():
-            import torch_xla.core.xla_model as xm
-            xm.master_print(f"에포크 {epoch} 완료: 메모리 최적화 수행")
             
     if is_tpu_available():
         import torch_xla.core.xla_model as xm
@@ -425,13 +420,10 @@ def run(rank, n_gpus, hps):
     else:
         print("training done")
 
+def _get_device_spec(device):
+    ordinal = xr.global_ordinal()
+    return str(device) if ordinal < 0 else '{}/{}'.format(device, ordinal)
 def _train_update(device, epoch, step, total_step, loss, tracker, writer):
-    import torch_xla.runtime as xr
-    # import sys
-    def _get_device_spec(device):
-        ordinal = xr.global_ordinal()
-        return str(device) if ordinal < 0 else '{}/{}'.format(device, ordinal)
-
     rate = tracker.rate()
     global_rate = tracker.global_rate()
     print(
@@ -439,6 +431,7 @@ def _train_update(device, epoch, step, total_step, loss, tracker, writer):
         f"Loss: {loss.item():.4f} Rate: {rate:.4f} Global Rate: {global_rate:.4f} ",
         flush=True,
     )
+    # import sys
     # use sys.stdout.flush() instead of print()
     # sys.stdout.write(
     #     f"[Train] {_get_device_spec(device)} Epoch: [{epoch}/{hps.train.epochs}][{step}/{total_step}] "
