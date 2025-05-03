@@ -75,7 +75,7 @@ def main():
         os.environ['PJRT_DEVICE'] = 'TPU'
         from GPT_SoVITS.utils_tpu import get_tpu_cores_count
         num_cores = get_tpu_cores_count()  # 자동으로 TPU 코어 수 감지
-       
+        num_cores = 1 # temp
         # TPU v4-32 메모리 최적화 설정
         # TPU용 멀티프로세싱 실행 (코어 수에 맞게 설정)
         # xmp.spawn 이전에 xm.xla_device 호출하면 안됌.
@@ -477,7 +477,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     try:
         for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
             if is_tpu_available():
-                from GPT_SoVITS.utils_tpu import move_to_device, get_xla_device, sync_tpu_cores
+                from GPT_SoVITS.utils_tpu import move_to_device, get_xla_device
                 device = get_xla_device()
                 tracker = xm.RateTracker()
                 # 메모리 최적화: 한 번에 하나씩 텐서 이동 및 불필요한 참조 제거
@@ -490,11 +490,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 text = move_to_device(text, device)
                 text_lengths = move_to_device(text_lengths, device)
                 
-                # 명시적 가비지 컬렉션 호출 (메모리 누수 방지)
                 
-                
-                # TPU 코어 간 동기화 (데이터 로딩 후, 모델 실행 전)
-                sync_tpu_cores()
             elif torch.cuda.is_available():
                 spec, spec_lengths = (
                     spec.cuda(
