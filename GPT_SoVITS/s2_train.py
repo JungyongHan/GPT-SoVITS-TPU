@@ -75,12 +75,19 @@ def main():
         os.environ['PJRT_DEVICE'] = 'TPU'
         from GPT_SoVITS.utils_tpu import get_tpu_cores_count
         num_cores = get_tpu_cores_count()  # 자동으로 TPU 코어 수 감지
-        num_cores = 1 # temp
+        # num_cores = 1 # temp
         # TPU v4-32 메모리 최적화 설정
         # TPU용 멀티프로세싱 실행 (코어 수에 맞게 설정)
         # xmp.spawn 이전에 xm.xla_device 호출하면 안됌.
-        import torch_xla.distributed.xla_multiprocessing as xmp
-        xmp.spawn(run, args=(num_cores, hps), nprocs=num_cores)
+        def _mp_fn(index):
+            # index는 프로세스 번호 (0부터 num_cores-1까지)
+            print(index)
+            run(rank=index, n_gpus=num_cores, hps=hps)
+        
+        # torch_xla.launch를 사용하여 TPU 멀티프로세싱 실행
+        import torch_xla
+        print(f"TPU 멀티프로세싱 시작 (코어 수: {num_cores})")
+        torch_xla.launch(_mp_fn, args=())
         return
     
     # GPU 또는 CPU 설정
@@ -696,8 +703,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                         for metric_name, metric_value in metrics.items():
                             if metric_name.find('aten::') == 0:
                                 aten_ops_sum += metric_value
-                            summary_writer.add_scalar(metric_name, metric_value, global_step)
-                            summary_writer.add_scalar('aten_ops_sum', aten_ops_sum, global_step)
+                            writer.add_scalar(metric_name, metric_value, global_step)
+                            writer.add_scalar('aten_ops_sum', aten_ops_sum, global_step)
             global_step += 1
     except Exception as e:
         # TPU 메모리 오류 처리
