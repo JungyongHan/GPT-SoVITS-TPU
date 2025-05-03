@@ -17,12 +17,12 @@ import gc  # 가비지 컬렉션 추가
 
 # TPUv4 최적화 설정
 TPU_OPTIMIZED_KWARGS = {
-    'persistent_workers': True,
-    'prefetch_factor': 32,
-    'loader_prefetch_size': 32,
+    'persistent_workers': False,
+    'prefetch_factor': 16,
+    'loader_prefetch_size': 8,
     'device_prefetch_size': 4,
     'num_workers': 8,
-    'host_to_device_transfer_threads': 4,
+    'host_to_device_transfer_threads': 1,
 }
 
 import torch
