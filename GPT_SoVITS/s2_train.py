@@ -428,24 +428,24 @@ def run(rank, n_gpus, hps):
 
 def _train_update(device, epoch, step, total_step, loss, tracker, writer):
     import torch_xla.runtime as xr
-    import sys
+    # import sys
     def _get_device_spec(device):
         ordinal = xr.global_ordinal()
         return str(device) if ordinal < 0 else '{}/{}'.format(device, ordinal)
 
     rate = tracker.rate()
     global_rate = tracker.global_rate()
-    # print(
-    #     f"[Train] {_get_device_spec(device)} Epoch: [{epoch}/{hps.train.epochs}][{step}/{total_step}] "
-    #     f"Loss: {loss.item():.4f} Rate: {rate:.4f} Global Rate: {global_rate:.4f} ",
-    #     flush=True,
-    # )
-    # use sys.stdout.flush() instead of print()
-    sys.stdout.write(
+    print(
         f"[Train] {_get_device_spec(device)} Epoch: [{epoch}/{hps.train.epochs}][{step}/{total_step}] "
-        f"Loss: {loss.item():.4f} Rate: {rate:.4f} Global Rate: {global_rate:.4f} \n"
+        f"Loss: {loss.item():.4f} Rate: {rate:.4f} Global Rate: {global_rate:.4f} ",
+        flush=True,
     )
-    sys.stdout.flush()
+    # use sys.stdout.flush() instead of print()
+    # sys.stdout.write(
+    #     f"[Train] {_get_device_spec(device)} Epoch: [{epoch}/{hps.train.epochs}][{step}/{total_step}] "
+    #     f"Loss: {loss.item():.4f} Rate: {rate:.4f} Global Rate: {global_rate:.4f} \n"
+    # )
+    # sys.stdout.flush()
 
 
 def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loaders, logger, writers):
