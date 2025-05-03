@@ -68,6 +68,9 @@ global_step = 0
 
 device = "cpu"  # cuda以外的设备，等mps优化后加入
 
+import torch_xla
+import torch_xla.distributed.xla_backend
+
 def main():
     # TPU 또는 GPU 설정
     if is_tpu_available():
@@ -76,7 +79,7 @@ def main():
         num_cores = get_tpu_cores_count()  # 자동으로 TPU 코어 수 감지
         # num_cores = 1 # temp
     
-        import torch_xla
+        
         print(f"TPU 멀티프로세싱 시작 (코어 수: {num_cores})")
         debug_single_process = num_cores == 1
         torch_xla.launch(
@@ -175,25 +178,15 @@ def run(rank, n_gpus, hps):
     collate_fn = TextAudioSpeakerCollate()
     # 데이터 로더 생성 - TPU에 최적화된 설정
     if is_tpu_available():
-        # train_loader = DataLoader(
-        #     train_dataset,
-        #     num_workers=TPU_OPTIMIZED_KWARGS['num_workers'],  # TPUv4 최적화 설정 적용
-        #     shuffle=False,
-        #     pin_memory=False,  # TPU에서는 pin_memory 사용 안함
-        #     collate_fn=collate_fn,
-        #     batch_sampler=train_sampler,
-        #     persistent_workers=TPU_OPTIMIZED_KWARGS['persistent_workers'],  # TPUv4 최적화 설정 적용
-        #     prefetch_factor=TPU_OPTIMIZED_KWARGS['prefetch_factor'],  # TPUv4 최적화 설정 적용
-        # )
         train_loader = DataLoader(
             train_dataset,
-            num_workers=0,
+            num_workers=TPU_OPTIMIZED_KWARGS['num_workers'],  # TPUv4 최적화 설정 적용
             shuffle=False,
-            pin_memory=False,
+            pin_memory=False,  # TPU에서는 pin_memory 사용 안함
             collate_fn=collate_fn,
             batch_sampler=train_sampler,
-            persistent_workers=False,
-            prefetch_factor=None,
+            persistent_workers=TPU_OPTIMIZED_KWARGS['persistent_workers'],  # TPUv4 최적화 설정 적용
+            prefetch_factor=TPU_OPTIMIZED_KWARGS['prefetch_factor'],  # TPUv4 최적화 설정 적용
         )
     else:
         train_loader = DataLoader(
