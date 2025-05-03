@@ -193,7 +193,7 @@ def run(rank, n_gpus, hps):
             collate_fn=collate_fn,
             batch_sampler=train_sampler,
             persistent_workers=True,
-            prefetch_factor=False,
+            prefetch_factor=None,
         )
     else:
         train_loader = DataLoader(
