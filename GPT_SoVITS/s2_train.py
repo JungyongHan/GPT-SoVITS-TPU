@@ -136,9 +136,9 @@ def run(rank, n_gpus, hps):
     
     # TPU v4-32에 최적화된 배치 크기 계산
     if is_tpu_available():
+        from torch_xla import runtime as xr
         effective_batch_size = max(1, hps.train.batch_size // 2)
         logging.info(f"TPU v4-32 환경에 최적화된 배치 크기 사용: {effective_batch_size}")
-        from torch_xla import runtime as xr
         n_gpus = xr.world_size()
         rank = xr.global_ordinal()
         
@@ -178,15 +178,18 @@ def run(rank, n_gpus, hps):
     if is_tpu_available():    
         import torch_xla.distributed.xla_backend
         import torch_xla.distributed.parallel_loader as pl
+        num_workers = 2
+        
         train_loader = DataLoader(
             train_dataset,
             batch_size=effective_batch_size,
             collate_fn=collate_fn,
             batch_sampler=train_sampler,
             shuffle=False,
-            num_workers=TPU_OPTIMIZED_KWARGS['num_workers'],  # TPUv4 최적화 설정 적용
-            persistent_workers=TPU_OPTIMIZED_KWARGS['persistent_workers'],  # TPUv4 최적화 설정 적용
-            prefetch_factor=TPU_OPTIMIZED_KWARGS['prefetch_factor'],  # TPUv4 최적화 설정 적용
+            num_workers=num_workers, # 동적으로 설정된 num_workers 사용
+            persistent_workers=True, # TPU 환경에서는 True 권장
+            prefetch_factor=TPU_OPTIMIZED_KWARGS['prefetch_factor'], # 기존 값 유지 또는 조정
+            pin_memory=False # TPU에서는 False 권장
         )
         train_loader = pl.MpDeviceLoader(
             train_loader, 
@@ -194,7 +197,7 @@ def run(rank, n_gpus, hps):
             loader_prefetch_size=TPU_OPTIMIZED_KWARGS['loader_prefetch_size'],
             device_prefetch_size=TPU_OPTIMIZED_KWARGS['device_prefetch_size'],
             host_to_device_transfer_threads=TPU_OPTIMIZED_KWARGS['host_to_device_transfer_threads']
-        )    
+        )
     else:
         train_loader = DataLoader(
             train_dataset,
@@ -470,56 +473,34 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 spec_lengths = move_to_device(spec_lengths, device)
                 y = move_to_device(y, device)
                 y_lengths = move_to_device(y_lengths, device)
-                ssl = move_to_device(ssl, device)
-                ssl.requires_grad = False
+                # Move tensors needed early
+                spec = move_to_device(spec, device)
+                spec_lengths = move_to_device(spec_lengths, device)
+                y = move_to_device(y, device)
+                y_lengths = move_to_device(y_lengths, device)
                 text = move_to_device(text, device)
                 text_lengths = move_to_device(text_lengths, device)
-                
-                
-                
+                # Keep ssl on CPU for now
+                ssl.requires_grad = False
+
             elif torch.cuda.is_available():
-                spec, spec_lengths = (
-                    spec.cuda(
-                        rank,
-                        non_blocking=True,
-                    ),
-                    spec_lengths.cuda(
-                        rank,
-                        non_blocking=True,
-                    ),
-                )
-                y, y_lengths = (
-                    y.cuda(
-                        rank,
-                        non_blocking=True,
-                    ),
-                    y_lengths.cuda(
-                        rank,
-                        non_blocking=True,
-                    ),
-                )
-                ssl = ssl.cuda(rank, non_blocking=True)
+                # Move tensors needed early
+                spec, spec_lengths = spec.cuda(rank, non_blocking=True), spec_lengths.cuda(rank, non_blocking=True)
+                y, y_lengths = y.cuda(rank, non_blocking=True), y_lengths.cuda(rank, non_blocking=True)
+                text, text_lengths = text.cuda(rank, non_blocking=True), text_lengths.cuda(rank, non_blocking=True)
+                # Keep ssl on CPU for now
                 ssl.requires_grad = False
-                # ssl_lengths = ssl_lengths.cuda(rank, non_blocking=True)
-                text, text_lengths = (
-                    text.cuda(
-                        rank,
-                        non_blocking=True,
-                    ),
-                    text_lengths.cuda(
-                        rank,
-                        non_blocking=True,
-                    ),
-                )
-            else:
-                spec, spec_lengths = spec.to(device), spec_lengths.to(device)
-                y, y_lengths = y.to(device), y_lengths.to(device)
-                ssl = ssl.to(device)
+
+            else: # CPU
+                # No explicit move needed if device is CPU, but keep requires_grad logic
                 ssl.requires_grad = False
-                # ssl_lengths = ssl_lengths.cuda(rank, non_blocking=True)
-                text, text_lengths = text.to(device), text_lengths.to(device)
-            
+                # spec, spec_lengths = spec.to(device), spec_lengths.to(device) # Already on CPU
+                # y, y_lengths = y.to(device), y_lengths.to(device)
+                # text, text_lengths = text.to(device), text_lengths.to(device)
+
             with autocast(enabled=hps.train.fp16_run):
+                # Move ssl to device just before use inside autocast
+                ssl = move_to_device(ssl, device) if is_tpu_available() else ssl.cuda(rank, non_blocking=True) if torch.cuda.is_available() else ssl
                 (
                     y_hat,
                     kl_ssl,
@@ -563,14 +544,14 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             
             # TPU v4-32에서 메모리 효율적인 역전파
             optim_d.zero_grad()
-            if scaler is None:
+            if scaler is None: # TPU
                 loss_disc_all.backward()
-                grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
-                xm.optimizer_step(optim_d)
-            else:
+                # TPU gradient clipping and optimizer step
+                grad_norm_d = xm.optimizer_step(optim_d, optimizer_args={'clipping_threshold': 1.0}) # Example threshold
+            else: # GPU/CPU
                 scaler.scale(loss_disc_all).backward()
                 scaler.unscale_(optim_d)
-                grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
+                grad_norm_d = commons.clip_grad_value_(net_d.parameters(), 1.0) # Example threshold
                 scaler.step(optim_d)
                 
             with autocast(enabled=hps.train.fp16_run):
@@ -586,18 +567,18 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
             # TPU v4-32에서 메모리 효율적인 역전파
             optim_g.zero_grad()
-            if scaler is None:
+            if scaler is None: # TPU
                 loss_gen_all.backward()
-                grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
-                xm.optimizer_step(optim_g)
-                tracker.add(hps.train.batch_size // 2)
-                xm.add_step_closure(
-                    _train_update, args=(device, epoch, global_step, len(train_loader), loss_gen, tracker, writer)
-                )
-                xm.mark_step()
-            else:
+                # TPU gradient clipping and optimizer step
+                grad_norm_g = xm.optimizer_step(optim_g, optimizer_args={'clipping_threshold': 1.0}) # Example threshold
+                tracker.add(effective_batch_size) # Use effective_batch_size
+                # Use xm.add_step_closure for actions after optimizer step
+                # xm.add_step_closure(_train_update, args=(device, epoch, global_step, len(train_loader), loss_gen, tracker, writer))
+                xm.mark_step() # Mark step for XLA execution
+            else: # GPU/CPU
                 scaler.scale(loss_gen_all).backward()
                 scaler.unscale_(optim_g)
+                grad_norm_g = commons.clip_grad_value_(net_g.parameters(), 1.0) # Example threshold
                 grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
                 scaler.step(optim_g)
                 scaler.update()
