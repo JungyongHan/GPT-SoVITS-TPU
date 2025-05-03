@@ -450,7 +450,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         import torch_xla.distributed.xla_backend
         import torch_xla.debug.metrics_compare_utils as mcu
         import torch_xla.debug.metrics as met
-        from GPT_SoVITS.utils_tpu import move_to_device, get_xla_device, sync_tpu_cores
+        from GPT_SoVITS.utils_tpu import move_to_device, get_xla_device
         xm.master_print(f"에포크 {epoch}: 학습 시작")
     else:
         print("start training")
@@ -686,8 +686,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         else:
             # 비-TPU 환경에서의 오류 처리
             logging.error(f"학습 중 오류 발생: {str(e)}")
-    
-    if epoch % hps.train.save_every_epoch == 0 and rank == 0:
+
+    def _save_checkpoint():
         if hps.train.if_save_latest == 0:
             utils.save_checkpoint(
                 net_g,
@@ -730,25 +730,53 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     "D_{}.pth".format(233333333333),
                 ),
             )
-        if rank == 0 and hps.train.if_save_every_weights == True:
-            if hasattr(net_g, "module"):
-                ckpt = net_g.module.state_dict()
-            else:
-                ckpt = net_g.state_dict()
-            logger.info(
-                "saving ckpt %s_e%s:%s"
-                % (
-                    hps.name,
-                    epoch,
-                    savee(
-                        ckpt,
-                        hps.name + "_e%s_s%s" % (epoch, global_step),
+            
+    if is_tpu_available():
+        # To Save the last checkpoint each VM
+        if xm.is_master_ordinal():
+            _save_checkpoint()
+            if rank == 0:
+                if hps.train.if_save_every_weights == True:
+                    if hasattr(net_g, "module"):
+                        ckpt = net_g.module.state_dict()
+                    else:
+                        ckpt = net_g.state_dict()
+                    logger.info(
+                        "saving ckpt %s_e%s:%s"
+                        % (
+                            hps.name,
+                            epoch,
+                            savee(
+                                ckpt,
+                                hps.name + "_e%s_s%s" % (epoch, global_step),
+                                epoch,
+                                global_step,
+                                hps,
+                            ),
+                        )
+                    )
+    else:
+        if epoch % hps.train.save_every_epoch == 0 and rank == 0:
+            _save_checkpoint()
+            if hps.train.if_save_every_weights == True:
+                if hasattr(net_g, "module"):
+                    ckpt = net_g.module.state_dict()
+                else:
+                    ckpt = net_g.state_dict()
+                logger.info(
+                    "saving ckpt %s_e%s:%s"
+                    % (
+                        hps.name,
                         epoch,
-                        global_step,
-                        hps,
-                    ),
+                        savee(
+                            ckpt,
+                            hps.name + "_e%s_s%s" % (epoch, global_step),
+                            epoch,
+                            global_step,
+                            hps,
+                        ),
+                    )
                 )
-            )
 
     if rank == 0:
         logger.info("====> Epoch: {}".format(epoch))
