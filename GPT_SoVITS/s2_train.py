@@ -461,7 +461,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     try:
         for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
             if is_tpu_available():
-                from GPT_SoVITS.utils_tpu import move_to_device, get_xla_device, sync_tpu_cores, safe_all_reduce
+                from GPT_SoVITS.utils_tpu import move_to_device, get_xla_device, sync_tpu_cores
                 device = get_xla_device()
                 tracker = xm.RateTracker()
                 # 메모리 최적화: 한 번에 하나씩 텐서 이동 및 불필요한 참조 제거
