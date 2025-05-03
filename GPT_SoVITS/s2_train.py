@@ -17,11 +17,11 @@ import logging
 # TPUv4 최적화 설정
 TPU_OPTIMIZED_KWARGS = {
     'persistent_workers': False,
-    'prefetch_factor': 16,
-    'loader_prefetch_size': 8,
-    'device_prefetch_size': 4,
-    'num_workers': 4,
-    'host_to_device_transfer_threads': 1,
+    'prefetch_factor': 32,
+    'loader_prefetch_size': 128,
+    'device_prefetch_size': 1,
+    'num_workers': 6,
+    'host_to_device_transfer_threads': 4,
 }
 
 import torch
@@ -78,7 +78,7 @@ def main():
     
         import torch_xla
         print(f"TPU 멀티프로세싱 시작 (코어 수: {num_cores})")
-        os.environ['XLA_USE_BF16'] = '1'  # BF16 사용으로 메모리 사용량 감소
+        # os.environ['XLA_USE_BF16'] = '1'  # BF16 사용으로 메모리 사용량 감소
         debug_single_process = num_cores == 1
         torch_xla.launch(
             run, args=(num_cores, hps), debug_single_process=debug_single_process)
@@ -461,6 +461,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     try:
         for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
             if is_tpu_available():
+                import torch_xla.distributed.xla_backend
                 from GPT_SoVITS.utils_tpu import move_to_device, get_xla_device, sync_tpu_cores
                 device = get_xla_device()
                 tracker = xm.RateTracker()
@@ -474,8 +475,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 text = move_to_device(text, device)
                 text_lengths = move_to_device(text_lengths, device)
                 
-                # 텐서 이동 후 동기화 - 메모리 최적화
-                sync_tpu_cores()
                 
                 
             elif torch.cuda.is_available():
@@ -700,9 +699,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     xm.master_print("지속적인 TPU 메모리 오류로 인해 배치 크기를 줄이는 것을 고려하세요.")
                     xm.master_print("config.json 파일에서 'batch_size' 값을 절반으로 줄이고 다시 시도하세요.")
                     
-                # TPU 코어 동기화 강제 수행
-                xm.mark_step()
-                sync_tpu_cores()
             else:
                 import traceback
                 import gc
