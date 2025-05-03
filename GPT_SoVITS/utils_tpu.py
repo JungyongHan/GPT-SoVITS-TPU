@@ -78,36 +78,8 @@ def sync_tpu_cores():
         return
     
     import torch_xla.core.xla_model as xm
-    # 명시적 가비지 컬렉션 호출    
-    # TPU 코어 동기화 - 중요: 이 호출은 TPU 코어 간 동기화를 수행합니다
     xm.mark_step()
     
-    # 동기화 후 추가 최적화
-    try:
-        # 불필요한 텐서 캐시 정리
-        torch.cuda.empty_cache() if torch.cuda.is_available() else None
-        
-        # XLA 컴파일러 최적화 설정
-        import torch_xla.core.xla_builder as xb
-        # 더 작은 그룹 크기로 메모리 사용량 감소
-        # xb.set_lowering_options("max_group_size=4,min_group_size=1")
-        
-        # 메모리 통계 로깅 (디버깅용)
-        import torch_xla.debug.metrics as met
-        if xm.get_ordinal() == 0 and xm.xrt_world_size() > 1:
-            memory_stats = met.metric_data('MemoryStats')
-            if memory_stats:
-                logging.debug(f"TPU 메모리 사용량: {memory_stats}")
-                
-        # 메모리 사용량 제한 설정 (TPU v4-32에 최적화)
-        try:
-            # 메모리 사용량을 85%로 제한하여 OOM 방지
-            met.set_memory_fraction(0.85)
-        except:
-            pass
-    except Exception as e:
-        logging.debug(f"TPU 코어 동기화 중 오류 발생: {e}")
-        pass
 
 def create_tpu_data_sampler(dataset, batch_size, rank=None, world_size=None, shuffle=True):
     """TPU에 최적화된 데이터 샘플러를 생성합니다."""
