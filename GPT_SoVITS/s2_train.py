@@ -180,7 +180,6 @@ def run(rank, n_gpus, hps):
     if is_tpu_available():   
         train_loader = DataLoader(
             train_dataset,
-            batch_size=effective_batch_size,
             collate_fn=collate_fn,
             batch_sampler=train_sampler,
             shuffle=False,
