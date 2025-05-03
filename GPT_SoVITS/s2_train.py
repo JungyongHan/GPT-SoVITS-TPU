@@ -13,7 +13,6 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from GPT_SoVITS.utils_tpu import is_tpu_available
 import logging
-import gc  # 가비지 컬렉션 추가
 
 # TPUv4 최적화 설정
 TPU_OPTIMIZED_KWARGS = {
@@ -21,7 +20,7 @@ TPU_OPTIMIZED_KWARGS = {
     'prefetch_factor': 16,
     'loader_prefetch_size': 8,
     'device_prefetch_size': 4,
-    'num_workers': 8,
+    'num_workers': 4,
     'host_to_device_transfer_threads': 1,
 }
 
