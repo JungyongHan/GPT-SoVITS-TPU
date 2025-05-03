@@ -192,7 +192,7 @@ def run(rank, n_gpus, hps):
             pin_memory=False,
             collate_fn=collate_fn,
             batch_sampler=train_sampler,
-            persistent_workers=True,
+            persistent_workers=False,
             prefetch_factor=None,
         )
     else:
