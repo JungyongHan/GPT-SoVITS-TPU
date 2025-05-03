@@ -77,7 +77,7 @@ def main():
         os.environ['PJRT_DEVICE'] = 'TPU'
         from GPT_SoVITS.utils_tpu import get_tpu_cores_count
         num_cores = get_tpu_cores_count()  # 자동으로 TPU 코어 수 감지
-        # num_cores = 1 # temp
+        num_cores = 2
     
         
         print(f"TPU 멀티프로세싱 시작 (코어 수: {num_cores})")
