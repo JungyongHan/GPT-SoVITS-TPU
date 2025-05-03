@@ -726,6 +726,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 xm.mark_step()
                 sync_tpu_cores()
             else:
+                import traceback
+                traceback.print_exc()
                 # 기타 오류 처리
                 xm.master_print(f"학습 중 오류 발생: {str(e)}")
         else:
