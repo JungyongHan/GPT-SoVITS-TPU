@@ -54,7 +54,8 @@ def spectrogram_torch(y, n_fft, sampling_rate, hop_size, win_size, center=False)
     if IS_TPU:
         spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[key],
                           center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=True)
-        spec = torch.abs(spec)
+        # 복소수 텐서에 대한 안전한 처리 (자동 미분 지원)
+        spec = torch.sqrt(spec.real.pow(2) + spec.imag.pow(2) + 1e-8)
     else:
         spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[key],
                           center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
@@ -112,7 +113,8 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
     if IS_TPU:
         spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[fmax_dtype_device],
                           center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=True)
-        spec = torch.abs(spec)
+        # 복소수 텐서에 대한 안전한 처리 (자동 미분 지원)
+        spec = torch.sqrt(spec.real.pow(2) + spec.imag.pow(2) + 1e-8)
     else:
         spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[fmax_dtype_device],
                           center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
