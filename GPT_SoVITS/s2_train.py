@@ -68,7 +68,10 @@ global_step = 0
 
 device = "cpu"  # cuda以外的设备，等mps优化后加入
 
-
+def _mp_fn(index, num_cores, hps):
+    print(index)
+    run(rank=index, n_gpus=num_cores, hps=hps)
+    
 def main():
     # TPU 또는 GPU 설정
     if is_tpu_available():
@@ -76,18 +79,10 @@ def main():
         from GPT_SoVITS.utils_tpu import get_tpu_cores_count
         num_cores = get_tpu_cores_count()  # 자동으로 TPU 코어 수 감지
         # num_cores = 1 # temp
-        # TPU v4-32 메모리 최적화 설정
-        # TPU용 멀티프로세싱 실행 (코어 수에 맞게 설정)
-        # xmp.spawn 이전에 xm.xla_device 호출하면 안됌.
-        def _mp_fn(index):
-            # index는 프로세스 번호 (0부터 num_cores-1까지)
-            print(index)
-            run(rank=index, n_gpus=num_cores, hps=hps)
-        
-        # torch_xla.launch를 사용하여 TPU 멀티프로세싱 실행
+    
         import torch_xla
         print(f"TPU 멀티프로세싱 시작 (코어 수: {num_cores})")
-        torch_xla.launch(_mp_fn, args=())
+        torch_xla.launch(_mp_fn, args=(num_cores, hps))
         return
     
     # GPU 또는 CPU 설정
@@ -104,6 +99,7 @@ def main():
             hps,
         ),
     )
+
 
 
 def run(rank, n_gpus, hps):
