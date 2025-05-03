@@ -71,7 +71,7 @@ device = "cpu"  # cuda以外的设备，等mps优化后加入
 def _mp_fn(index, num_cores, hps):
     print(index)
     run(rank=index, n_gpus=num_cores, hps=hps)
-    
+
 def main():
     # TPU 또는 GPU 설정
     if is_tpu_available():
@@ -99,9 +99,7 @@ def main():
             hps,
         ),
     )
-
-
-
+    
 def run(rank, n_gpus, hps):
     global global_step
     if rank == 0:
