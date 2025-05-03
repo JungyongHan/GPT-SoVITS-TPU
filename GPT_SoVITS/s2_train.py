@@ -20,7 +20,7 @@ TPU_OPTIMIZED_KWARGS = {
     'prefetch_factor': 16,
     'loader_prefetch_size': 8,
     'device_prefetch_size': 4,
-    'num_workers': 4,
+    'num_workers': 0,
     'host_to_device_transfer_threads': 1,
 }
 
