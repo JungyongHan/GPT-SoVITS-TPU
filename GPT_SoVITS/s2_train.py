@@ -20,7 +20,7 @@ TPU_OPTIMIZED_KWARGS = {
     'prefetch_factor': 16,
     'loader_prefetch_size': 8,
     'device_prefetch_size': 4,
-    'num_workers': 0,
+    'num_workers': 4,
     'host_to_device_transfer_threads': 1,
 }
 
@@ -175,15 +175,25 @@ def run(rank, n_gpus, hps):
     collate_fn = TextAudioSpeakerCollate()
     # 데이터 로더 생성 - TPU에 최적화된 설정
     if is_tpu_available():
+        # train_loader = DataLoader(
+        #     train_dataset,
+        #     num_workers=TPU_OPTIMIZED_KWARGS['num_workers'],  # TPUv4 최적화 설정 적용
+        #     shuffle=False,
+        #     pin_memory=False,  # TPU에서는 pin_memory 사용 안함
+        #     collate_fn=collate_fn,
+        #     batch_sampler=train_sampler,
+        #     persistent_workers=TPU_OPTIMIZED_KWARGS['persistent_workers'],  # TPUv4 최적화 설정 적용
+        #     prefetch_factor=TPU_OPTIMIZED_KWARGS['prefetch_factor'],  # TPUv4 최적화 설정 적용
+        # )
         train_loader = DataLoader(
             train_dataset,
-            num_workers=TPU_OPTIMIZED_KWARGS['num_workers'],  # TPUv4 최적화 설정 적용
+            num_workers=0,
             shuffle=False,
-            pin_memory=False,  # TPU에서는 pin_memory 사용 안함
+            pin_memory=False,
             collate_fn=collate_fn,
             batch_sampler=train_sampler,
-            persistent_workers=TPU_OPTIMIZED_KWARGS['persistent_workers'],  # TPUv4 최적화 설정 적용
-            prefetch_factor=TPU_OPTIMIZED_KWARGS['prefetch_factor'],  # TPUv4 최적화 설정 적용
+            persistent_workers=True,
+            prefetch_factor=False,
         )
     else:
         train_loader = DataLoader(
