@@ -17,10 +17,10 @@ import logging
 # TPUv4 최적화 설정
 TPU_OPTIMIZED_KWARGS = {
     'persistent_workers': True,
-    'prefetch_factor': 32,
-    'loader_prefetch_size': 128,
-    'device_prefetch_size': 1,
-    'num_workers': 12,
+    'prefetch_factor': 16,
+    'loader_prefetch_size': 8,
+    'device_prefetch_size': 4,
+    'num_workers': 6,
     'host_to_device_transfer_threads': 4,
 }
 
