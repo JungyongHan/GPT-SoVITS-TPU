@@ -174,13 +174,6 @@ def run(rank, n_gpus, hps):
             prefetch_factor=TPU_OPTIMIZED_KWARGS['prefetch_factor'], # 기존 값 유지 또는 조정
             pin_memory=True
         )
-        train_loader = pl.MpDeviceLoader(
-            train_loader, 
-            device,
-            loader_prefetch_size=TPU_OPTIMIZED_KWARGS['loader_prefetch_size'],
-            device_prefetch_size=TPU_OPTIMIZED_KWARGS['device_prefetch_size'],
-            host_to_device_transfer_threads=TPU_OPTIMIZED_KWARGS['host_to_device_transfer_threads']
-        )
     else:
         train_loader = DataLoader(
             train_dataset,
