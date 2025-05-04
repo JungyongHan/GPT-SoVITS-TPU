@@ -143,40 +143,34 @@ def run(rank, n_gpus, hps):
         n_gpus = xr.world_size()
         rank = xr.global_ordinal()
         print(f"XLA:OPENED {rank}/{n_gpus}")
-        train_sampler = torch.utils.data.distributed.DistributedSampler(
-            train_dataset,
-            num_replicas=n_gpus,
-            rank=rank,
-            shuffle=True
-        )
-    else:
-        train_sampler = DistributedBucketSampler(
-            train_dataset,
-            hps.train.batch_size,
-            [
-                32,
-                300,
-                400,
-                500,
-                600,
-                700,
-                800,
-                900,
-                1000,
-                1100,
-                1200,
-                1300,
-                1400,
-                1500,
-                1600,
-                1700,
-                1800,
-                1900,
-            ],
-            num_replicas=n_gpus,
-            rank=rank,
-            shuffle=True,
-        )
+
+    train_sampler = DistributedBucketSampler(
+        train_dataset,
+        hps.train.batch_size,
+        [
+            32,
+            300,
+            400,
+            500,
+            600,
+            700,
+            800,
+            900,
+            1000,
+            1100,
+            1200,
+            1300,
+            1400,
+            1500,
+            1600,
+            1700,
+            1800,
+            1900,
+        ],
+        num_replicas=n_gpus,
+        rank=rank,
+        shuffle=True,
+    )
 
     collate_fn = TextAudioSpeakerCollate()
     # 데이터 로더 생성 - TPU에 최적화된 설정
