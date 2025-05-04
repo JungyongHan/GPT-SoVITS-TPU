@@ -27,7 +27,7 @@ def load_audio(file, sr):
         raise RuntimeError(i18n("音频加载失败"))
 
     return np.frombuffer(out, np.float32).flatten()
-
+   
 
 def clean_path(path_str: str):
     if path_str.endswith(("\\", "/")):

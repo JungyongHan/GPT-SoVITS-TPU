@@ -16,12 +16,13 @@ import logging
 
 # TPUv4 최적화 설정
 TPU_OPTIMIZED_KWARGS = {
-    'persistent_workers': True,
-    'prefetch_factor': 16,
-    'loader_prefetch_size': 8,
-    'device_prefetch_size': 4,
-    'num_workers': 6,
-    'host_to_device_transfer_threads': 4,
+    'persistent_workers': True, # worker 가 데이터 로더를 계속 유지할지 여부
+    'prefetch_factor': 1, # worker 가 미리 로드할 배치 수 (prefetch_factor * num_workers)
+    'num_workers': 4, # 데이터 로더 worker 수
+
+    'device_prefetch_size': 1, # TPU 에서 준비할 배치 수
+    'loader_prefetch_size': 4, # CPU 에서 TPU에 보낼걸 미리 준비할 배치 수
+    'host_to_device_transfer_threads': 4, # TPU에서 데이터 로더에서 호스트로 데이터를 전송하는 스레드 수
 }
 
 import torch
@@ -78,7 +79,6 @@ def main():
     
         import torch_xla
         print(f"TPU 멀티프로세싱 시작 (코어 수: {num_cores})")
-        # os.environ['XLA_USE_BF16'] = '1'  # BF16 사용으로 메모리 사용량 감소
         debug_single_process = num_cores == 1
         torch_xla.launch(
             run, args=(num_cores, hps), debug_single_process=debug_single_process)
@@ -139,17 +139,13 @@ def run(rank, n_gpus, hps):
     
     # TPU v4-32에 최적화된 배치 크기 계산
     if is_tpu_available():
-        effective_batch_size = max(1, hps.train.batch_size // 2)
-        xm.master_print(f"TPU v4-32 환경에 최적화된 배치 크기 사용: {effective_batch_size}")
         n_gpus = xr.world_size()
         rank = xr.global_ordinal()
         
-    else:
-        effective_batch_size = hps.train.batch_size
     
     train_sampler = DistributedBucketSampler(
         train_dataset,
-        effective_batch_size,
+        hps.train.batch_size,
         [
             32,
             300,
@@ -348,8 +344,9 @@ def run(rank, n_gpus, hps):
                 ),
             )
 
-    net_g.to(device) 
-    net_d.to(device)  
+    if device == "cpu":
+        net_g.to(device) 
+        net_d.to(device)  
 
     # scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
     # scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
@@ -882,6 +879,7 @@ def evaluate(hps, generator, eval_loader, writer_eval):
 
 
 if __name__ == "__main__":
+
     # start logging
     logging.basicConfig(
         level=logging.INFO,

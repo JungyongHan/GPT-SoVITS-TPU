@@ -101,34 +101,21 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
     def get_audio_text_speaker_pair(self, audiopath_sid_text):
         audiopath, phoneme_ids = audiopath_sid_text
         text = torch.FloatTensor(phoneme_ids)
-        spec, wav, ssl = None, None, None # Initialize
         try:
-            # 1. Load and process audio first
             spec, wav = self.get_audio("%s/%s" % (self.path5, audiopath))
-
-            # 2. Load SSL features only if audio loading succeeded
             with torch.no_grad():
-                ssl_path = "%s/%s.pt" % (self.path4, audiopath)
-                ssl = torch.load(ssl_path, map_location="cpu") # Explicitly load to CPU
-                ssl = ssl.cpu() # Ensure it's on CPU
+                ssl = torch.load("%s/%s.pt" % (self.path4, audiopath), map_location="cpu")
                 if ssl.shape[-1] != spec.shape[-1]:
                     typee = ssl.dtype
-                    # Pad on CPU before potentially moving to another device later
                     ssl = F.pad(ssl.float(), (0, 1), mode="replicate").to(typee)
                 ssl.requires_grad = False
-
-        except Exception as e:
+        except:
             traceback.print_exc()
-            print(f"Error processing {audiopath}: {e}")
-            # Create dummy tensors if any step failed
-            if spec is None:
-                spec = torch.zeros(1025, 100) # Use dimensions from hparams if available
-            if wav is None:
-                wav = torch.zeros(1, 100 * self.hop_length)
-            if ssl is None:
-                ssl = torch.zeros(1, 768, spec.shape[-1]) # Match spec dim if possible
-            text = text[-1:] # Use last phoneme as fallback
-
+            spec = torch.zeros(1025, 100)
+            wav = torch.zeros(1, 100 * self.hop_length)
+            ssl = torch.zeros(1, 768, 100)
+            text = text[-1:]
+            print("load audio or ssl error!!!!!!", audiopath)
         return (ssl, spec, wav, text)
 
     def get_audio(self, filename):
@@ -185,7 +172,6 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
             dir,
         )
         return reference_mel, ssl, wav2, mel
-
 
 class TextAudioSpeakerCollate:
     """Zero-pads model inputs and targets"""
