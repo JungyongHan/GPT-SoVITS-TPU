@@ -73,15 +73,13 @@ def main():
     # TPU 또는 GPU 설정
     if is_tpu_available():
         os.environ['PJRT_DEVICE'] = 'TPU'
-        from GPT_SoVITS.utils_tpu import get_tpu_cores_count
-        num_cores = get_tpu_cores_count()  # 자동으로 TPU 코어 수 감지
-        num_cores = 1 # temp
+        # num_cores = 1 # temp
     
         import torch_xla
-        print(f"TPU 멀티프로세싱 시작 (코어 수: {num_cores})")
-        debug_single_process = num_cores == 1
+        print(f"TPU 멀티프로세싱 시작")
+        debug_single_process = False
         torch_xla.launch(
-            run, args=(num_cores, hps), debug_single_process=debug_single_process)
+            run, args=(1, hps), debug_single_process=debug_single_process)
         return
     
     # GPU 또는 CPU 설정
