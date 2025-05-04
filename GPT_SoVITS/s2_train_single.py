@@ -222,14 +222,9 @@ def run(rank, n_gpus, hps):
     # mrte_p=net_g.enc_p.mrte.parameters()
 
     # TPU v4-32에 최적화된 옵티마이저 설정
-    if is_tpu_available():
-        # TPU에서는 더 작은 학습률과 더 큰 eps 값 사용
-        effective_lr = hps.train.learning_rate * 0.8
-        effective_eps = hps.train.eps * 10.0
-        logging.info(f"TPU v4-32 환경에 최적화된 학습률 사용: {effective_lr}, eps: {effective_eps}")
-    else:
-        effective_lr = hps.train.learning_rate
-        effective_eps = hps.train.eps
+
+    effective_lr = hps.train.learning_rate
+    effective_eps = hps.train.eps
     
     optim_g = torch.optim.AdamW(
         # filter(lambda p: p.requires_grad, net_g.parameters()),###默认所有层lr一致
