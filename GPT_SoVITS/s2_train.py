@@ -75,13 +75,14 @@ def main():
         os.environ['PJRT_DEVICE'] = 'TPU'
         from GPT_SoVITS.utils_tpu import get_tpu_cores_count
         num_cores = get_tpu_cores_count()  # 자동으로 TPU 코어 수 감지
-        # num_cores = 1 # temp
+        num_cores = 1 # temp
     
         import torch_xla
         print(f"TPU 멀티프로세싱 시작 (코어 수: {num_cores})")
         debug_single_process = num_cores == 1
         torch_xla.launch(
             run, args=(num_cores, hps), debug_single_process=debug_single_process)
+        return
     
     # GPU 또는 CPU 설정
     if torch.cuda.is_available():
@@ -141,35 +142,40 @@ def run(rank, n_gpus, hps):
     if is_tpu_available():
         n_gpus = xr.world_size()
         rank = xr.global_ordinal()
-        
-    
-    train_sampler = DistributedBucketSampler(
-        train_dataset,
-        hps.train.batch_size,
-        [
-            32,
-            300,
-            400,
-            500,
-            600,
-            700,
-            800,
-            900,
-            1000,
-            1100,
-            1200,
-            1300,
-            1400,
-            1500,
-            1600,
-            1700,
-            1800,
-            1900,
-        ],
-        num_replicas=n_gpus,
-        rank=rank,
-        shuffle=True,
-    )
+        train_sampler = torch.utils.data.distributed.DistributedSampler(
+            train_dataset,
+            num_replicas=n_gpus,
+            rank=rank,
+            shuffle=True
+        )
+    else:
+        train_sampler = DistributedBucketSampler(
+            train_dataset,
+            hps.train.batch_size,
+            [
+                32,
+                300,
+                400,
+                500,
+                600,
+                700,
+                800,
+                900,
+                1000,
+                1100,
+                1200,
+                1300,
+                1400,
+                1500,
+                1600,
+                1700,
+                1800,
+                1900,
+            ],
+            num_replicas=n_gpus,
+            rank=rank,
+            shuffle=True,
+        )
 
     collate_fn = TextAudioSpeakerCollate()
     # 데이터 로더 생성 - TPU에 최적화된 설정
@@ -184,13 +190,13 @@ def run(rank, n_gpus, hps):
             prefetch_factor=TPU_OPTIMIZED_KWARGS['prefetch_factor'], # 기존 값 유지 또는 조정
             pin_memory=False
         )
-        # train_loader = pl.MpDeviceLoader(
-        #     train_loader, 
-        #     device,
-        #     loader_prefetch_size=TPU_OPTIMIZED_KWARGS['loader_prefetch_size'],
-        #     device_prefetch_size=TPU_OPTIMIZED_KWARGS['device_prefetch_size'],
-        #     host_to_device_transfer_threads=TPU_OPTIMIZED_KWARGS['host_to_device_transfer_threads']
-        # )
+        train_loader = pl.MpDeviceLoader(
+            train_loader, 
+            device,
+            loader_prefetch_size=TPU_OPTIMIZED_KWARGS['loader_prefetch_size'],
+            device_prefetch_size=TPU_OPTIMIZED_KWARGS['device_prefetch_size'],
+            host_to_device_transfer_threads=TPU_OPTIMIZED_KWARGS['host_to_device_transfer_threads']
+        )
     else:
         train_loader = DataLoader(
             train_dataset,
