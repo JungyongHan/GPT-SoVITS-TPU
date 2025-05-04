@@ -54,7 +54,9 @@ sudo systemctl restart nfs-kernel-server
 
 nano ~/nfs_share/setup.sh
 ```
-rm -rf GPT-SoVITS-TPU
+#!/bin/bash
+#rm -rf GPT-SoVITS-TPU
+sudo apt-get update
 sudo apt-get install -y build-essential cmake python3.10-venv
 sudo apt-get install -y ffmpeg cmake git-lfs zip unzip
 git clone https://github.com/JungyongHan/GPT-SoVITS-TPU.git

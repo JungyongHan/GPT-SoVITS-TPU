@@ -20,8 +20,8 @@ TPU_OPTIMIZED_KWARGS = {
     'prefetch_factor': 32,
     'loader_prefetch_size': 128,
     'device_prefetch_size': 1,
-    'num_workers': 12,
-    'host_to_device_transfer_threads': 4,
+    'num_workers': 96,
+    'host_to_device_transfer_threads': 1,
 }
 
 import torch
@@ -448,7 +448,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     # TPU에서 XLA 컴파일러 최적화 설정
     
     try:
-        for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
+        for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(tqdm(train_loader)):
             if is_tpu_available():
                 device = get_xla_device()
                 tracker = xm.RateTracker()
