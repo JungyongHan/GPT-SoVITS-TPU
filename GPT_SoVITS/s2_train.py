@@ -142,6 +142,7 @@ def run(rank, n_gpus, hps):
     if is_tpu_available():
         n_gpus = xr.world_size()
         rank = xr.global_ordinal()
+        print(f"XLA:OPENED {rank}/{n_gpus}")
         train_sampler = torch.utils.data.distributed.DistributedSampler(
             train_dataset,
             num_replicas=n_gpus,
