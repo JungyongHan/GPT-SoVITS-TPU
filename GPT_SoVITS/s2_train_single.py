@@ -172,7 +172,14 @@ def run(rank, n_gpus, hps):
             num_workers=TPU_OPTIMIZED_KWARGS['num_workers'], # 동적으로 설정된 num_workers 사용
             persistent_workers=True, # TPU 환경에서는 True 권장
             prefetch_factor=TPU_OPTIMIZED_KWARGS['prefetch_factor'], # 기존 값 유지 또는 조정
-            pin_memory=True
+            pin_memory=False
+        )
+        train_loader = pl.MpDeviceLoader(
+            train_loader, 
+            device,
+            loader_prefetch_size=TPU_OPTIMIZED_KWARGS['loader_prefetch_size'],
+            device_prefetch_size=TPU_OPTIMIZED_KWARGS['device_prefetch_size'],
+            host_to_device_transfer_threads=TPU_OPTIMIZED_KWARGS['host_to_device_transfer_threads']
         )
     else:
         train_loader = DataLoader(
@@ -871,5 +878,9 @@ if __name__ == "__main__":
             logging.StreamHandler(),
         ],  # 파일과 콘솔에 동시에 로깅
     )
+    # add logging
+    logger = logging.getLogger(__name__)
+    logger.info("Start training")
+    logger.info(f"hps: {hps}")
         
     main()

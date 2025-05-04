@@ -186,7 +186,7 @@ def run(rank, n_gpus, hps):
             num_workers=TPU_OPTIMIZED_KWARGS['num_workers'], # 동적으로 설정된 num_workers 사용
             persistent_workers=True, # TPU 환경에서는 True 권장
             prefetch_factor=TPU_OPTIMIZED_KWARGS['prefetch_factor'], # 기존 값 유지 또는 조정
-            pin_memory=True
+            pin_memory=False
         )
         train_loader = pl.MpDeviceLoader(
             train_loader, 
@@ -730,7 +730,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     "D_{}.pth".format(233333333333),
                 ),
             )
-            
+
     if is_tpu_available():
         # To Save the last checkpoint each VM
         if xm.is_master_ordinal():
@@ -891,5 +891,7 @@ if __name__ == "__main__":
             logging.StreamHandler(),
         ],  # 파일과 콘솔에 동시에 로깅
     )
-        
+    logger = logging.getLogger(__name__)
+    logger.info("Start training")
+    logger.info(f"hps: {hps}")
     main()
