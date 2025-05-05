@@ -452,6 +452,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     memory_error_count = 0
     max_memory_errors = 3
     tracker = None
+    device = None
     # TPU에서 XLA 컴파일러 최적화 설정
     
     try:
@@ -490,7 +491,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 # y, y_lengths = y.to(device), y_lengths.to(device)
                 # text, text_lengths = text.to(device), text_lengths.to(device)
 
-            with autocast(enabled=hps.train.fp16_run):
+            with autocast(device=device ,enabled=hps.train.fp16_run):
                 print("forward")
                 # Move ssl to device just before use inside autocast
                 ssl = move_to_device(ssl, device) if is_tpu_available() else ssl.cuda(rank, non_blocking=True) if torch.cuda.is_available() else ssl
@@ -530,7 +531,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 # Discriminator
                 y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
                 print("discriminator done")
-                with autocast(enabled=False):
+                with autocast(device=device, enabled=False):
                     print("loss")
                     loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
                         y_d_hat_r,
@@ -555,10 +556,10 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 scaler.step(optim_d)
 
             print("backward done1")
-            with autocast(enabled=hps.train.fp16_run):
+            with autocast(device=device, enabled=hps.train.fp16_run):
                 # Generator
                 y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
-                with autocast(enabled=False):
+                with autocast(device=device, enabled=False):
                     loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
                     loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
 
