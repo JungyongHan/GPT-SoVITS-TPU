@@ -454,6 +454,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     
     try:
         for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
+            print(batch_idx)
             if is_tpu_available():
                 device = get_xla_device()
                 tracker = xm.RateTracker()
