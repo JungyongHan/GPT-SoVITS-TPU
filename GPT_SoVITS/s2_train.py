@@ -33,8 +33,9 @@ from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from torch.cuda.amp import GradScaler as grad_scaler
+from torch.optim import AdamW
 from tqdm import tqdm
-
 logging.getLogger("matplotlib").setLevel(logging.INFO)
 logging.getLogger("h5py").setLevel(logging.INFO)
 logging.getLogger("numba").setLevel(logging.INFO)
@@ -113,15 +114,11 @@ def run(rank, n_gpus, hps):
         import torch_xla.distributed.xla_backend
         import torch_xla.distributed.parallel_loader as pl
         import torch_xla.core.xla_model as xm
-        import torch_xla.amp.syncfree.AdamW as AdamW
         from torch_xla import runtime as xr
 
         device = xm.xla_device()
         dist.init_process_group('xla', init_method='xla://')
     else:
-        from torch.cuda.amp import GradScaler as grad_scaler
-        import torch.optim.AdamW as AdamW
-
         dist.init_process_group(
             backend="gloo" if os.name == "nt" or not torch.cuda.is_available() else "nccl",
             init_method="env://?use_libuv=False",
