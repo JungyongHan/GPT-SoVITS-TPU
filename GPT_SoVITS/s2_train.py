@@ -542,14 +542,13 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             
             # TPU v4-32에서 메모리 효율적인 역전파
             print("backward")
+            optim_d.zero_grad()
 
             if is_tpu_available():
-                optim_d.zero_grad()
                 loss_disc_all.backward()
                 xm.optimizer_step(optim_d)
                 grad_norm_d = None
             else:
-                optim_d.zero_grad()
                 scaler.scale(loss_disc_all).backward()
                 scaler.unscale_(optim_d)
                 grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
@@ -568,14 +567,14 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     loss_gen_all = loss_gen + loss_fm + loss_mel + kl_ssl * 1 + loss_kl
             print("backward2")
             # TPU v4-32에서 메모리 효율적인 역전파
+            optim_g.zero_grad()
+
             if is_tpu_available():
-                optim_g.zero_grad()
-                loss_disc_all.backward()
+                loss_gen_all.backward()
                 xm.optimizer_step(optim_g)
                 grad_norm_g = None
             else:
-                optim_g.zero_grad()
-                scaler.scale(loss_disc_all).backward()
+                scaler.scale(loss_gen_all).backward()
                 scaler.unscale_(optim_g)
                 grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
                 scaler.step(optim_g)
