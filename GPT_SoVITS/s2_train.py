@@ -541,9 +541,12 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             print("backward")
             optim_d.zero_grad()
             if scaler is None: # TPU
+                print("backward run")
                 loss_disc_all.backward()
                 # TPU gradient clipping and optimizer step
+                print("waiting for xm.optimizer_step")
                 xm.optimizer_step(optim_d)
+
             else: # GPU/CPU
                 scaler.scale(loss_disc_all).backward()
                 scaler.unscale_(optim_d)
@@ -564,7 +567,9 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             # TPU v4-32에서 메모리 효율적인 역전파
             optim_g.zero_grad()
             if scaler is None: # TPU
+                print("backward3")
                 loss_gen_all.backward()
+                print("waiting for xm.optimizer_step")
                 # TPU gradient clipping and optimizer step
                 xm.optimizer_step(optim_g)
                 tracker.add(effective_batch_size) # Use effective_batch_size
