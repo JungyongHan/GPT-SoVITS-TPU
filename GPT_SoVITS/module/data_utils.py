@@ -195,6 +195,8 @@ class TextAudioSpeakerCollate:
         batch: [text_normalized, spec_normalized, wav_normalized, sid]
         """
         # Right zero-pad all one-hot text sequences to max input length
+        import time
+        starttime = time.time()
         _, ids_sorted_decreasing = torch.sort(torch.LongTensor([x[1].size(1) for x in batch]), dim=0, descending=True)
 
         max_ssl_len = max([x[0].size(2) for x in batch])
@@ -237,7 +239,7 @@ class TextAudioSpeakerCollate:
             text = row[3]
             text_padded[i, : text.size(0)] = text
             text_lengths[i] = text.size(0)
-
+        print(f"data_loader:collate", time.time() - starttime)
         return ssl_padded, ssl_lengths, spec_padded, spec_lengths, wav_padded, wav_lengths, text_padded, text_lengths
 
 
@@ -981,6 +983,8 @@ class DistributedBucketSampler(torch.utils.data.distributed.DistributedSampler):
         return buckets, num_samples_per_bucket
 
     def __iter__(self):
+        import time
+        starttime = time.time()
         g = torch.Generator()
         g.manual_seed(self.epoch)
 
@@ -1014,6 +1018,7 @@ class DistributedBucketSampler(torch.utils.data.distributed.DistributedSampler):
         self.batches = batches
 
         assert len(self.batches) * self.batch_size == self.num_samples
+        print("sampler time", time.time() - starttime)
         return iter(self.batches)
 
     def _bisect(self, x, lo=0, hi=None):
