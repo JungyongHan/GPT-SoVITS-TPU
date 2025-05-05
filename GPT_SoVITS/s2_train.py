@@ -28,7 +28,7 @@ TPU_OPTIMIZED_KWARGS = {
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from torch.cuda.amp import GradScaler, autocast
+
 from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
@@ -106,16 +106,6 @@ def run(rank, n_gpus, hps):
         writer = SummaryWriter(log_dir=hps.s2_ckpt_dir)
         writer_eval = SummaryWriter(log_dir=os.path.join(hps.s2_ckpt_dir, "eval"))
 
-    # TPU 환경인 경우 분산 설정 건너뛰기 (XLA가 처리)
-    if not is_tpu_available():
-        dist.init_process_group(
-            backend="gloo" if os.name == "nt" or not torch.cuda.is_available() else "nccl",
-            init_method="env://?use_libuv=False",
-            world_size=n_gpus,
-            rank=rank,
-        )
-    else:
-        dist.init_process_group('xla', init_method='xla://')
     torch.manual_seed(hps.train.seed)
     
     # 디바이스 설정
@@ -123,15 +113,28 @@ def run(rank, n_gpus, hps):
         import torch_xla.distributed.xla_backend
         import torch_xla.distributed.parallel_loader as pl
         import torch_xla.core.xla_model as xm
+        import torch_xla.amp.GradScaler as grad_scaler
+        import torch_xla.amp.syncfree.AdamW as AdamW
         from torch_xla import runtime as xr
-        device = xm.xla_device()
 
-    elif torch.cuda.is_available():
-        torch.cuda.set_device(rank)
-        device = f"cuda:{rank}"
+        device = xm.xla_device()
+        dist.init_process_group('xla', init_method='xla://')
     else:
-        # CPU 모드
-        device = "cpu"
+        import torch.optim.GradScaler as grad_scaler
+        import torch.optim.AdamW as AdamW
+
+        dist.init_process_group(
+            backend="gloo" if os.name == "nt" or not torch.cuda.is_available() else "nccl",
+            init_method="env://?use_libuv=False",
+            world_size=n_gpus,
+            rank=rank,
+        )
+        if torch.cuda.is_available():
+            torch.cuda.set_device(rank)
+            device = f"cuda:{rank}"
+        else:
+            # CPU 모드
+            device = "cpu"
 
     # TPU v4-32에 최적화된 배치 크기 계산
     if is_tpu_available():
@@ -249,7 +252,9 @@ def run(rank, n_gpus, hps):
     effective_lr = hps.train.learning_rate
     effective_eps = hps.train.eps
     
-    optim_g = torch.optim.AdamW(
+    
+
+    optim_g = AdamW(
         # filter(lambda p: p.requires_grad, net_g.parameters()),###默认所有层lr一致
         [
             {"params": base_params, "lr": effective_lr},
@@ -270,7 +275,7 @@ def run(rank, n_gpus, hps):
         betas=hps.train.betas,
         eps=effective_eps,
     )
-    optim_d = torch.optim.AdamW(
+    optim_d = AdamW(
         net_d.parameters(),
         effective_lr,
         betas=hps.train.betas,
@@ -360,10 +365,7 @@ def run(rank, n_gpus, hps):
         scheduler_g.step()
         scheduler_d.step()
 
-    if is_tpu_available():
-        scaler = None
-    else:
-        scaler = GradScaler(enabled=hps.train.fp16_run)
+    scaler = grad_scaler(enabled=hps.train.fp16_run)
 
     if is_tpu_available():
         xm.master_print(f"에포크 {epoch_str}부터 학습 시작")
@@ -443,8 +445,10 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         import torch_xla.debug.metrics_compare_utils as mcu
         import torch_xla.debug.metrics as met
         from GPT_SoVITS.utils_tpu import move_to_device, get_xla_device
+        from torch_xla.amp import autocast
         xm.master_print(f"에포크 {epoch}: 학습 시작")
     else:
+        from torch.cuda.amp import autocast
         print("start training")
     # TPU v4-32에서 메모리 문제 방지를 위한 배치 처리 개선
     memory_error_count = 0
@@ -540,18 +544,15 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             # TPU v4-32에서 메모리 효율적인 역전파
             print("backward")
             optim_d.zero_grad()
-            if scaler is None: # TPU
-                print("backward run")
-                loss_disc_all.backward()
-                # TPU gradient clipping and optimizer step
-                print("waiting for xm.optimizer_step")
-                xm.optimizer_step(optim_d)
+            scaler.scale(loss_disc_all).backward()
+            if is_tpu_available():
+                gradients=xm._fetch_gradients(optim_d)
+                xm.all_reduce('sum', gradients, scale=1.0/xm.xrt_world_size())
 
-            else: # GPU/CPU
-                scaler.scale(loss_disc_all).backward()
-                scaler.unscale_(optim_d)
-                grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
-                scaler.step(optim_d)
+            scaler.unscale_(optim_d)
+            grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
+            scaler.step(optim_d)
+
             print("backward done1")
             with autocast(enabled=hps.train.fp16_run):
                 # Generator
@@ -566,23 +567,22 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             print("backward2")
             # TPU v4-32에서 메모리 효율적인 역전파
             optim_g.zero_grad()
-            if scaler is None: # TPU
-                print("backward3")
-                loss_gen_all.backward()
-                print("waiting for xm.optimizer_step")
-                # TPU gradient clipping and optimizer step
-                xm.optimizer_step(optim_g)
-                tracker.add(effective_batch_size) # Use effective_batch_size
-                # Use xm.add_step_closure for actions after optimizer step
-                xm.add_step_closure(_train_update, args=(device, epoch, batch_idx, len(train_loader), loss_gen, tracker, writer))
-                xm.mark_step() # Mark step for XLA execution
-            else: # GPU/CPU
-                scaler.scale(loss_gen_all).backward()
-                scaler.unscale_(optim_g)
-                grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
-                scaler.step(optim_g)
-                scaler.update()
+            scaler.scale(loss_gen_all).backward()
+            if is_tpu_available():
+                gradients=xm._fetch_gradients(optim_g)
+                xm.all_reduce('sum', gradients, scale=1.0/xm.xrt_world_size())
+            scaler.unscale_(optim_g)
+            grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
+            scaler.step(optim_g)
+            scaler.update()
             print("backward done")
+            if is_tpu_available():
+                xm.add_step_closure(
+                    _train_update,
+                    args=(device, epoch, batch_idx, len(train_loader), loss_gen_all, tracker, writer),
+                )
+                xm.mark_step()
+                
             if rank == 0:
                 if global_step % hps.train.log_interval == 0:
                     lr = optim_g.param_groups[0]["lr"]
