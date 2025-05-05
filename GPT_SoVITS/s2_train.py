@@ -472,7 +472,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 text_lengths = move_to_device(text_lengths, device)
                 # Keep ssl on CPU for now
                 ssl.requires_grad = False
-
+                print("tensors moved to device")
             elif torch.cuda.is_available():
                 # Move tensors needed early
                 spec, spec_lengths = spec.cuda(rank, non_blocking=True), spec_lengths.cuda(rank, non_blocking=True)
@@ -489,6 +489,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 # text, text_lengths = text.to(device), text_lengths.to(device)
 
             with autocast(enabled=hps.train.fp16_run):
+                print("forward")
                 # Move ssl to device just before use inside autocast
                 ssl = move_to_device(ssl, device) if is_tpu_available() else ssl.cuda(rank, non_blocking=True) if torch.cuda.is_available() else ssl
                 (
@@ -500,7 +501,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     (z, z_p, m_p, logs_p, m_q, logs_q),
                     stats_ssl,
                 ) = net_g(ssl, spec, spec_lengths, text, text_lengths)
-                
+                print("forward done")
                 mel = spec_to_mel_torch(
                     spec,
                     hps.data.filter_length,
@@ -509,6 +510,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     hps.data.mel_fmin,
                     hps.data.mel_fmax,
                 )
+                print("mel done")
                 y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
                 y_hat_mel = mel_spectrogram_torch(
                     y_hat.squeeze(1),
@@ -520,19 +522,23 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     hps.data.mel_fmin,
                     hps.data.mel_fmax,
                 )
-
+                print("y_mel done")
                 y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
 
                 # Discriminator
                 y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
+                print("discriminator done")
                 with autocast(enabled=False):
+                    print("loss")
                     loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
                         y_d_hat_r,
                         y_d_hat_g,
                     )
                     loss_disc_all = loss_disc
+                    print("loss done")
             
             # TPU v4-32에서 메모리 효율적인 역전파
+            print("backward")
             optim_d.zero_grad()
             if scaler is None: # TPU
                 loss_disc_all.backward()
@@ -543,7 +549,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 scaler.unscale_(optim_d)
                 grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
                 scaler.step(optim_d)
-                
+            print("backward done1")
             with autocast(enabled=hps.train.fp16_run):
                 # Generator
                 y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
@@ -554,7 +560,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     loss_fm = feature_loss(fmap_r, fmap_g)
                     loss_gen, losses_gen = generator_loss(y_d_hat_g)
                     loss_gen_all = loss_gen + loss_fm + loss_mel + kl_ssl * 1 + loss_kl
-
+            print("backward2")
             # TPU v4-32에서 메모리 효율적인 역전파
             optim_g.zero_grad()
             if scaler is None: # TPU
@@ -571,7 +577,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
                 scaler.step(optim_g)
                 scaler.update()
-            
+            print("backward done")
             if rank == 0:
                 if global_step % hps.train.log_interval == 0:
                     lr = optim_g.param_groups[0]["lr"]
