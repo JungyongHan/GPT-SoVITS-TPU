@@ -133,14 +133,14 @@ def run(rank, n_gpus, hps):
         # CPU 모드
         device = "cpu"
 
-    # TPU v4-32에 최적화된 버킷 크기 조정 (더 작은 버킷으로 메모리 사용량 감소)
-    train_dataset = TextAudioSpeakerLoader(hps.data)  ########
-    
     # TPU v4-32에 최적화된 배치 크기 계산
     if is_tpu_available():
         n_gpus = xr.world_size()
         rank = xr.global_ordinal()
         print(f"XLA:OPENED {rank}/{n_gpus}")
+    # TPU v4-32에 최적화된 버킷 크기 조정 (더 작은 버킷으로 메모리 사용량 감소)
+    train_dataset = TextAudioSpeakerLoader(hps.data, device_str=f"{device}:{rank}({n_gpus})")  ########
+    
 
     train_sampler = DistributedBucketSampler(
         train_dataset,

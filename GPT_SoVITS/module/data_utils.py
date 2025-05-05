@@ -21,11 +21,12 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
     3) computes spectrograms from audio files.
     """
 
-    def __init__(self, hparams, val=False):
+    def __init__(self, hparams, device_str, val=False):
         exp_dir = hparams.exp_dir
         self.path2 = "%s/2-name2text.txt" % exp_dir
         self.path4 = "%s/4-cnhubert" % exp_dir
         self.path5 = "%s/5-wav32k" % exp_dir
+        self.debug = device_str
         assert os.path.exists(self.path2)
         assert os.path.exists(self.path4)
         assert os.path.exists(self.path5)
@@ -136,7 +137,11 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
     def __getitem__(self, index):
         # with torch.no_grad():
         try:
-            print(f"data_loader:{index}/{len(self.audiopaths_sid_text)}")
+            import time
+            starttime = time.time()
+            result = self.get_audio_text_speaker_pair(self.audiopaths_sid_text[index])
+            print(f"[{self.debug}]data_loader:{index}/{len(self.audiopaths_sid_text)}", time.time() - starttime)
+            return result
         except:
             pass
         return self.get_audio_text_speaker_pair(self.audiopaths_sid_text[index])
