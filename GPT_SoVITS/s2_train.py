@@ -113,7 +113,6 @@ def run(rank, n_gpus, hps):
         import torch_xla.distributed.xla_backend
         import torch_xla.distributed.parallel_loader as pl
         import torch_xla.core.xla_model as xm
-        from torch_xla.amp.grad_scaler import grad_scaler
         import torch_xla.amp.syncfree.AdamW as AdamW
         from torch_xla import runtime as xr
 
@@ -364,8 +363,10 @@ def run(rank, n_gpus, hps):
     for _ in range(epoch_str):
         scheduler_g.step()
         scheduler_d.step()
-
-    scaler = grad_scaler(enabled=hps.train.fp16_run)
+    if is_tpu_available():
+        scaler = None
+    else:
+        scaler = grad_scaler(enabled=hps.train.fp16_run)
 
     if is_tpu_available():
         xm.master_print(f"에포크 {epoch_str}부터 학습 시작")
@@ -543,15 +544,18 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             
             # TPU v4-32에서 메모리 효율적인 역전파
             print("backward")
-            optim_d.zero_grad()
-            scaler.scale(loss_disc_all).backward()
-            if is_tpu_available():
-                gradients=xm._fetch_gradients(optim_d)
-                xm.all_reduce('sum', gradients, scale=1.0/xm.xrt_world_size())
 
-            scaler.unscale_(optim_d)
-            grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
-            scaler.step(optim_d)
+            if is_tpu_available():
+                optim_d.zero_grad()
+                loss_disc_all.backward()
+                xm.optimizer_step(optim_d)
+                grad_norm_d = None
+            else:
+                optim_d.zero_grad()
+                scaler.scale(loss_disc_all).backward()
+                scaler.unscale_(optim_d)
+                grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
+                scaler.step(optim_d)
 
             print("backward done1")
             with autocast(enabled=hps.train.fp16_run):
@@ -566,15 +570,19 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     loss_gen_all = loss_gen + loss_fm + loss_mel + kl_ssl * 1 + loss_kl
             print("backward2")
             # TPU v4-32에서 메모리 효율적인 역전파
-            optim_g.zero_grad()
-            scaler.scale(loss_gen_all).backward()
             if is_tpu_available():
-                gradients=xm._fetch_gradients(optim_g)
-                xm.all_reduce('sum', gradients, scale=1.0/xm.xrt_world_size())
-            scaler.unscale_(optim_g)
-            grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
-            scaler.step(optim_g)
-            scaler.update()
+                optim_g.zero_grad()
+                loss_disc_all.backward()
+                xm.optimizer_step(optim_g)
+                grad_norm_g = None
+            else:
+                optim_g.zero_grad()
+                scaler.scale(loss_disc_all).backward()
+                scaler.unscale_(optim_g)
+                grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
+                scaler.step(optim_g)
+                scaler.update()
+
             print("backward done")
             if is_tpu_available():
                 xm.add_step_closure(
