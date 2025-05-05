@@ -135,6 +135,12 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         # with torch.no_grad():
+        try:
+            import torch_xla.runtime as xr
+            ordinal = xr.global_ordinal()
+            print(f"[XLA:{ordinal}]data_loader:{index}/{len(self.audiopaths_sid_text)}")
+        except:
+            pass
         return self.get_audio_text_speaker_pair(self.audiopaths_sid_text[index])
 
     def __len__(self):

@@ -207,20 +207,29 @@ def run(rank, n_gpus, hps):
     #                              batch_size=1, pin_memory=True,
     #                              drop_last=False, collate_fn=collate_fn)    
     # 모델 생성
-    net_g = SynthesizerTrn(
-        hps.data.filter_length // 2 + 1,
-        hps.train.segment_size // hps.data.hop_length,
-        n_speakers=hps.data.n_speakers,
-        **hps.model,
+    net_g = (
+        SynthesizerTrn(
+            hps.data.filter_length // 2 + 1,
+            hps.train.segment_size // hps.data.hop_length,
+            n_speakers=hps.data.n_speakers,
+            **hps.model,
+        ).cuda(rank)
+        if torch.cuda.is_available()
+        else SynthesizerTrn(
+            hps.data.filter_length // 2 + 1,
+            hps.train.segment_size // hps.data.hop_length,
+            n_speakers=hps.data.n_speakers,
+            **hps.model,
+        ).to(device)
     )
     
-    net_d = MultiPeriodDiscriminator(hps.model.use_spectral_norm)
-    
+    net_d = (
+        MultiPeriodDiscriminator(hps.model.use_spectral_norm).cuda(rank)
+        if torch.cuda.is_available()
+        else MultiPeriodDiscriminator(hps.model.use_spectral_norm).to(device)
+    )
     # TPU v4-32에서 메모리 최적화 기법 적용
     
-    # 적절한 디바이스로 모델 이동
-    net_g = net_g.to(device)
-    net_d = net_d.to(device)
     for name, param in net_g.named_parameters():
         if not param.requires_grad:
             print(name, "not requires_grad")
@@ -237,15 +246,8 @@ def run(rank, n_gpus, hps):
     # et_p=net_g.enc_p.encoder_text.parameters()
     # mrte_p=net_g.enc_p.mrte.parameters()
 
-    # TPU v4-32에 최적화된 옵티마이저 설정
-    if is_tpu_available():
-        # TPU에서는 더 작은 학습률과 더 큰 eps 값 사용
-        effective_lr = hps.train.learning_rate * 0.8
-        effective_eps = hps.train.eps * 10.0
-        logging.info(f"TPU v4-32 환경에 최적화된 학습률 사용: {effective_lr}, eps: {effective_eps}")
-    else:
-        effective_lr = hps.train.learning_rate
-        effective_eps = hps.train.eps
+    effective_lr = hps.train.learning_rate
+    effective_eps = hps.train.eps
     
     optim_g = torch.optim.AdamW(
         # filter(lambda p: p.requires_grad, net_g.parameters()),###默认所有层lr一致
@@ -267,18 +269,12 @@ def run(rank, n_gpus, hps):
         effective_lr,
         betas=hps.train.betas,
         eps=effective_eps,
-        # TPU에서 메모리 효율적인 옵티마이저 설정
-        maximize=False,
-        weight_decay=0.01 if is_tpu_available() else 0.0,
     )
     optim_d = torch.optim.AdamW(
         net_d.parameters(),
         effective_lr,
         betas=hps.train.betas,
         eps=effective_eps,
-        # TPU에서 메모리 효율적인 옵티마이저 설정
-        maximize=False,
-        weight_decay=0.01 if is_tpu_available() else 0.0,
     )
     # 분산 학습 설정
     if is_tpu_available():
