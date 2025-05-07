@@ -367,7 +367,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             gradients = xm._fetch_gradients(optim_d)
             xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size())
             scaler.unscale_(optim_d)
-            grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
             scaler.step(optim_d)
 
             xm.add_step_closure( _debug_print, args=(device, f"backward done") )
@@ -388,7 +387,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             gradients = xm._fetch_gradients(optim_g)
             xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size())
             scaler.unscale_(optim_g)
-            grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
             scaler.step(optim_g)
             scaler.update()
 
@@ -411,6 +409,9 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                         )
                     )
                     logger.info([x.item() for x in losses] + [global_step, lr])
+                    grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
+
+                    grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
 
                     scalar_dict = {
                         "loss/g/total": loss_gen_all,
