@@ -78,7 +78,12 @@ from torch_xla.amp import syncfree, GradScaler, autocast
 
 def run(rank, n_gpus, hps):
     global global_step
+    device = xm.xla_device()
+    n_gpus = xr.world_size()
+    rank = xr.global_ordinal()
     if rank == 0:
+        server = xp.start_server(9012)
+
         logger = utils.get_logger(hps.data.exp_dir)
         logger.info(hps)
         # utils.check_git_hash(hps.s2_ckpt_dir)
@@ -87,10 +92,7 @@ def run(rank, n_gpus, hps):
 
     torch.manual_seed(hps.train.seed)
     
-    device = xm.xla_device()
 
-    n_gpus = xr.world_size()
-    rank = xr.global_ordinal()
     dist.init_process_group('xla', init_method='xla://', rank=rank, world_size=n_gpus)
     print(f"XLA:OPENED {rank}/{n_gpus}")
 
@@ -299,165 +301,164 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     net_d.train()
     
     for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
-      with xp.StepTrace('train'):
-        with xp.Trace('build_graph'):
-            spec, spec_lengths = spec.to(device), spec_lengths.to(device)
-            y, y_lengths = y.to(device), y_lengths.to(device)
-            text, text_lengths = text.to(device), text_lengths.to(device)
-            ssl.requires_grad = False
-
-            with autocast(device=device, enabled=hps.train.fp16_run):
-                xm.add_step_closure( _debug_print, args=(device, f"forward") )
-                # Move ssl to device just before use inside autocast
-                ssl = ssl.to(device)
-                (
-                    y_hat,
-                    kl_ssl,
-                    ids_slice,
-                    x_mask,
-                    z_mask,
-                    (z, z_p, m_p, logs_p, m_q, logs_q),
-                    stats_ssl,
-                ) = net_g(ssl, spec, spec_lengths, text, text_lengths)
-                xm.add_step_closure( _debug_print, args=(device, f"forward done") )
-                mel = spec_to_mel_torch(
-                    spec,
-                    hps.data.filter_length,
-                    hps.data.n_mel_channels,
-                    hps.data.sampling_rate,
-                    hps.data.mel_fmin,
-                    hps.data.mel_fmax,
-                )
-                xm.add_step_closure( _debug_print, args=(device, f"mel done") )
-
-                y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
-                y_hat_mel = mel_spectrogram_torch(
-                    y_hat.squeeze(1),
-                    hps.data.filter_length,
-                    hps.data.n_mel_channels,
-                    hps.data.sampling_rate,
-                    hps.data.hop_length,
-                    hps.data.win_length,
-                    hps.data.mel_fmin,
-                    hps.data.mel_fmax,
-                )
-                xm.add_step_closure( _debug_print, args=(device, f"y_mel done") )
-                y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
-
-                # Discriminator
-                y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
-                xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
-                with autocast(device=device, enabled=False):
-                
-                    loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
-                        y_d_hat_r,
-                        y_d_hat_g,
+        spec, spec_lengths = spec.to(device), spec_lengths.to(device)
+        y, y_lengths = y.to(device), y_lengths.to(device)
+        text, text_lengths = text.to(device), text_lengths.to(device)
+        ssl.requires_grad = False
+        with xp.StepTrace('train'):
+            with xp.Trace('build_graph'):
+                with autocast(device=device, enabled=hps.train.fp16_run):
+                    xm.add_step_closure( _debug_print, args=(device, f"forward") )
+                    # Move ssl to device just before use inside autocast
+                    ssl = ssl.to(device)
+                    (
+                        y_hat,
+                        kl_ssl,
+                        ids_slice,
+                        x_mask,
+                        z_mask,
+                        (z, z_p, m_p, logs_p, m_q, logs_q),
+                        stats_ssl,
+                    ) = net_g(ssl, spec, spec_lengths, text, text_lengths)
+                    xm.add_step_closure( _debug_print, args=(device, f"forward done") )
+                    mel = spec_to_mel_torch(
+                        spec,
+                        hps.data.filter_length,
+                        hps.data.n_mel_channels,
+                        hps.data.sampling_rate,
+                        hps.data.mel_fmin,
+                        hps.data.mel_fmax,
                     )
-                    loss_disc_all = loss_disc
-                    xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
-            
-            xm.add_step_closure( _debug_print, args=(device, f"backward") )
-            optim_d.zero_grad()
-            scaler.scale(loss_disc_all).backward()
-            gradients = xm._fetch_gradients(optim_d)
-            xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
-            scaler.unscale_(optim_d)
-            scaler.step(optim_d)
+                    xm.add_step_closure( _debug_print, args=(device, f"mel done") )
 
-            xm.add_step_closure( _debug_print, args=(device, f"backward done") )
-            with autocast(device=device, enabled=hps.train.fp16_run):
-                # Generator
-                y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
-                with autocast(device=device, enabled=False):
-                    loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
-                    loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
+                    y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
+                    y_hat_mel = mel_spectrogram_torch(
+                        y_hat.squeeze(1),
+                        hps.data.filter_length,
+                        hps.data.n_mel_channels,
+                        hps.data.sampling_rate,
+                        hps.data.hop_length,
+                        hps.data.win_length,
+                        hps.data.mel_fmin,
+                        hps.data.mel_fmax,
+                    )
+                    xm.add_step_closure( _debug_print, args=(device, f"y_mel done") )
+                    y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
 
-                    loss_fm = feature_loss(fmap_r, fmap_g)
-                    loss_gen, losses_gen = generator_loss(y_d_hat_g)
-                    loss_gen_all = loss_gen + loss_fm + loss_mel + kl_ssl * 1 + loss_kl
-
-            xm.add_step_closure( _debug_print, args=(device, f"loss_gen done") )
-            optim_g.zero_grad()
-            scaler.scale(loss_gen_all).backward()
-            gradients = xm._fetch_gradients(optim_g)
-            xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
-            scaler.unscale_(optim_g)
-            scaler.step(optim_g)
-            scaler.update()
-
-            xm.add_step_closure( _debug_print, args=(device, f"backward done") )
-
-            xm.add_step_closure(
-                _train_update,
-                args=(device, epoch, batch_idx, len(train_loader), loss_gen_all, tracker, writer),
-            )
-            scheduler_g.step()
-            scheduler_d.step()
-                
-            if rank == 0:
-                if global_step % hps.train.log_interval == 0:
-                    lr = optim_g.param_groups[0]["lr"]
-                    losses = [loss_disc, loss_gen, loss_fm, loss_mel, kl_ssl, loss_kl]
-                    logger.info(
-                        "Train Epoch: {} [{:.0f}%]".format(
-                            epoch,
-                            100.0 * batch_idx / len(train_loader),
+                    # Discriminator
+                    y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
+                    xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
+                    with autocast(device=device, enabled=False):
+                    
+                        loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
+                            y_d_hat_r,
+                            y_d_hat_g,
                         )
-                    )
-                    logger.info([x.item() for x in losses] + [global_step, lr])
-                    grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
+                        loss_disc_all = loss_disc
+                        xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
+                
+                xm.add_step_closure( _debug_print, args=(device, f"backward") )
+                optim_d.zero_grad()
+                scaler.scale(loss_disc_all).backward()
+                gradients = xm._fetch_gradients(optim_d)
+                xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
+                scaler.unscale_(optim_d)
+                scaler.step(optim_d)
 
-                    grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
+                xm.add_step_closure( _debug_print, args=(device, f"backward done") )
+                with autocast(device=device, enabled=hps.train.fp16_run):
+                    # Generator
+                    y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
+                    with autocast(device=device, enabled=False):
+                        loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
+                        loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
 
-                    scalar_dict = {
-                        "loss/g/total": loss_gen_all,
-                        "loss/d/total": loss_disc_all,
-                        "learning_rate": lr,
-                        "grad_norm_d": grad_norm_d,
-                        "grad_norm_g": grad_norm_g,
-                    }
-                    scalar_dict.update(
-                        {
-                            "loss/g/fm": loss_fm,
-                            "loss/g/mel": loss_mel,
-                            "loss/g/kl_ssl": kl_ssl,
-                            "loss/g/kl": loss_kl,
+                        loss_fm = feature_loss(fmap_r, fmap_g)
+                        loss_gen, losses_gen = generator_loss(y_d_hat_g)
+                        loss_gen_all = loss_gen + loss_fm + loss_mel + kl_ssl * 1 + loss_kl
+
+                xm.add_step_closure( _debug_print, args=(device, f"loss_gen done") )
+                optim_g.zero_grad()
+                scaler.scale(loss_gen_all).backward()
+                gradients = xm._fetch_gradients(optim_g)
+                xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
+                scaler.unscale_(optim_g)
+                scaler.step(optim_g)
+                scaler.update()
+
+                xm.add_step_closure( _debug_print, args=(device, f"backward done") )
+
+                xm.add_step_closure(
+                    _train_update,
+                    args=(device, epoch, batch_idx, len(train_loader), loss_gen_all, tracker, writer),
+                )
+                scheduler_g.step()
+                scheduler_d.step()
+                    
+                if rank == 0:
+                    if global_step % hps.train.log_interval == 0:
+                        lr = optim_g.param_groups[0]["lr"]
+                        losses = [loss_disc, loss_gen, loss_fm, loss_mel, kl_ssl, loss_kl]
+                        logger.info(
+                            "Train Epoch: {} [{:.0f}%]".format(
+                                epoch,
+                                100.0 * batch_idx / len(train_loader),
+                            )
+                        )
+                        logger.info([x.item() for x in losses] + [global_step, lr])
+                        grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
+
+                        grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
+
+                        scalar_dict = {
+                            "loss/g/total": loss_gen_all,
+                            "loss/d/total": loss_disc_all,
+                            "learning_rate": lr,
+                            "grad_norm_d": grad_norm_d,
+                            "grad_norm_g": grad_norm_g,
                         }
-                    )
+                        scalar_dict.update(
+                            {
+                                "loss/g/fm": loss_fm,
+                                "loss/g/mel": loss_mel,
+                                "loss/g/kl_ssl": kl_ssl,
+                                "loss/g/kl": loss_kl,
+                            }
+                        )
 
-                    # scalar_dict.update({"loss/g/{}".format(i): v for i, v in enumerate(losses_gen)})
-                    # scalar_dict.update({"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)})
-                    # scalar_dict.update({"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)})
-                    image_dict = None
-                    try:  ###Some people installed the wrong version of matplotlib.
-                        image_dict = {
-                            "slice/mel_org": utils.plot_spectrogram_to_numpy(
-                                y_mel[0].data.cpu().numpy(),
-                            ),
-                            "slice/mel_gen": utils.plot_spectrogram_to_numpy(
-                                y_hat_mel[0].data.cpu().numpy(),
-                            ),
-                            "all/mel": utils.plot_spectrogram_to_numpy(
-                                mel[0].data.cpu().numpy(),
-                            ),
-                            "all/stats_ssl": utils.plot_spectrogram_to_numpy(
-                                stats_ssl[0].data.cpu().numpy(),
-                            ),
-                        }
-                    except:
-                        pass
-                    if image_dict:
-                        utils.summarize( writer=writer, global_step=global_step, images=image_dict, scalars=scalar_dict, )
-                    else:
-                        utils.summarize( writer=writer, global_step=global_step, scalars=scalar_dict, )
-                    metrics = mcu.parse_metrics_report(met.metrics_report())
-                    aten_ops_sum = 0
-                    for metric_name, metric_value in metrics.items():
-                        if metric_name.find('aten::') == 0:
-                            aten_ops_sum += metric_value
-                        writer.add_scalar(metric_name, metric_value, global_step)
-                        writer.add_scalar('aten_ops_sum', aten_ops_sum, global_step)
-            global_step += 1
+                        # scalar_dict.update({"loss/g/{}".format(i): v for i, v in enumerate(losses_gen)})
+                        # scalar_dict.update({"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)})
+                        # scalar_dict.update({"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)})
+                        image_dict = None
+                        try:  ###Some people installed the wrong version of matplotlib.
+                            image_dict = {
+                                "slice/mel_org": utils.plot_spectrogram_to_numpy(
+                                    y_mel[0].data.cpu().numpy(),
+                                ),
+                                "slice/mel_gen": utils.plot_spectrogram_to_numpy(
+                                    y_hat_mel[0].data.cpu().numpy(),
+                                ),
+                                "all/mel": utils.plot_spectrogram_to_numpy(
+                                    mel[0].data.cpu().numpy(),
+                                ),
+                                "all/stats_ssl": utils.plot_spectrogram_to_numpy(
+                                    stats_ssl[0].data.cpu().numpy(),
+                                ),
+                            }
+                        except:
+                            pass
+                        if image_dict:
+                            utils.summarize( writer=writer, global_step=global_step, images=image_dict, scalars=scalar_dict, )
+                        else:
+                            utils.summarize( writer=writer, global_step=global_step, scalars=scalar_dict, )
+                        metrics = mcu.parse_metrics_report(met.metrics_report())
+                        aten_ops_sum = 0
+                        for metric_name, metric_value in metrics.items():
+                            if metric_name.find('aten::') == 0:
+                                aten_ops_sum += metric_value
+                            writer.add_scalar(metric_name, metric_value, global_step)
+                            writer.add_scalar('aten_ops_sum', aten_ops_sum, global_step)
+                global_step += 1
 
     
 
@@ -632,7 +633,6 @@ def evaluate(hps, generator, eval_loader, writer_eval):
 if __name__ == "__main__":
     if is_tpu_available():
         os.environ['PJRT_DEVICE'] = 'TPU'
-        server = xp.start_server(9012)
         print(f"TPU 멀티프로세싱 시작")
         debug_single_process = False
         torch_xla.launch(
