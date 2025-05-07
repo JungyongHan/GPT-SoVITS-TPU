@@ -88,10 +88,10 @@ def run(rank, n_gpus, hps):
     torch.manual_seed(hps.train.seed)
     
     device = xm.xla_device()
-    dist.init_process_group('xla', init_method='xla://')
 
     n_gpus = xr.world_size()
     rank = xr.global_ordinal()
+    dist.init_process_group('xla', init_method='xla://', rank=rank, world_size=n_gpus)
     print(f"XLA:OPENED {rank}/{n_gpus}")
 
     train_dataset = TextAudioSpeakerLoader(hps.data, device_str=f"{device}:{rank}({n_gpus})")  ########
@@ -177,6 +177,8 @@ def run(rank, n_gpus, hps):
     net_g = DDP(net_g, device_ids=[rank], find_unused_parameters=True, broadcast_buffers=False, gradient_as_bucket_view=True)
     net_d = DDP(net_d, device_ids=[rank], find_unused_parameters=True, broadcast_buffers=False, gradient_as_bucket_view=True)
 
+    net_g = net_g.to(device) 
+    net_d = net_d.to(device)  
     try:  # 如果能加载自动resume
         _, _, _, epoch_str = utils.load_checkpoint(
             utils.latest_checkpoint_path("%s/logs_s2_%s" % (hps.data.exp_dir, hps.model.version), "D_*.pth"),
@@ -214,8 +216,6 @@ def run(rank, n_gpus, hps):
             traceback.print_exc()
             raise Exception("Failed to load pre-trained model") from e
 
-    net_g = net_g.to(device) 
-    net_d = net_d.to(device)  
 
 
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
