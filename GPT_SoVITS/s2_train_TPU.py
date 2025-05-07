@@ -176,8 +176,6 @@ def run(rank, n_gpus, hps):
         betas=hps.train.betas,
         eps=hps.train.eps,
     )
-    net_g = DDP(net_g, gradient_as_bucket_view=True)
-    net_d = DDP(net_d, gradient_as_bucket_view=True)
 
     try:  # 如果能加载自动resume
         _, _, _, epoch_str = utils.load_checkpoint(
@@ -202,13 +200,13 @@ def run(rank, n_gpus, hps):
         global_step = 0
         try:
             if hps.train.pretrained_s2G != "" and hps.train.pretrained_s2G != None and os.path.exists(hps.train.pretrained_s2G):
-                net_g.module.load_state_dict(
+                net_g.load_state_dict(
                     torch.load(hps.train.pretrained_s2G, map_location="cpu")["weight"],
                     strict=False,
                 )
                 
             if hps.train.pretrained_s2D != "" and hps.train.pretrained_s2D != None and os.path.exists(hps.train.pretrained_s2D):
-                net_d.module.load_state_dict(
+                net_d.load_state_dict(
                     torch.load(hps.train.pretrained_s2D, map_location="cpu")["weight"],
                 )
         except Exception as e:
@@ -511,7 +509,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         _save_checkpoint()
         if rank == 0:
             if hps.train.if_save_every_weights == True:
-                ckpt = net_g.module.state_dict()
+                ckpt = net_g.state_dict()
                 logger.info(
                     "saving ckpt %s_e%s:%s"
                     % (
