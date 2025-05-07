@@ -153,24 +153,24 @@ def run(rank, n_gpus, hps):
             {"params": base_params, "lr": hps.train.learning_rate},
             {
                 "params": net_g.enc_p.text_embedding.parameters(),
-                "lr": hps.train.learning_rate * hps.train.text_low_lr_rate,
+                "lr": hps.train.learning_rate * hps.train.text_low_lr_rate * n_gpus,
             },
             {
                 "params": net_g.enc_p.encoder_text.parameters(),
-                "lr": hps.train.learning_rate * hps.train.text_low_lr_rate,
+                "lr": hps.train.learning_rate * hps.train.text_low_lr_rate * n_gpus,
             },
             {
                 "params": net_g.enc_p.mrte.parameters(),
-                "lr": hps.train.learning_rate * hps.train.text_low_lr_rate,
+                "lr": hps.train.learning_rate * hps.train.text_low_lr_rate * n_gpus,
             },
         ],
-        hps.train.learning_rate,
+        hps.train.learning_rate * n_gpus,
         betas=hps.train.betas,
         eps=hps.train.eps,
     )
     optim_d = syncfree.AdamW(
         net_d.parameters(),
-        hps.train.learning_rate,
+        hps.train.learning_rate * n_gpus,
         betas=hps.train.betas,
         eps=hps.train.eps,
     )
@@ -219,18 +219,18 @@ def run(rank, n_gpus, hps):
 
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
         optim_g,
-        gamma=hps.train.lr_decay * xr.world_size(),
+        gamma=hps.train.lr_decay,
         last_epoch=-1,
     )
     scheduler_d = torch.optim.lr_scheduler.ExponentialLR(
         optim_d,
-        gamma=hps.train.lr_decay * xr.world_size(),
+        gamma=hps.train.lr_decay,
         last_epoch=-1,
     )
     for _ in range(epoch_str):
         scheduler_g.step()
         scheduler_d.step()
-    
+
     scaler = GradScaler(use_zero_grad=True, enabled=hps.train.fp16_run)
     xm.master_print(f"에포크 {epoch_str}부터 학습 시작")
         
