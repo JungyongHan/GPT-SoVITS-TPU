@@ -167,6 +167,159 @@ def tpu_safe_mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_si
     
     return spec
 
+import torch
+import torch.utils.data
+from librosa.filters import mel as librosa_mel_fn
+import numpy as np
+
+MAX_WAV_VALUE = 32768.0
+
+# Pre-compute mel basis for common configurations to avoid recomputation
+def precompute_mel_basis(sampling_rate, n_fft, num_mels, fmin, fmax, dtype=torch.float32, device='xla'):
+    mel = librosa_mel_fn(sr=sampling_rate, n_fft=n_fft, n_mels=num_mels, fmin=fmin, fmax=fmax)
+    return torch.from_numpy(mel).to(dtype=dtype, device=device)
+
+# Pre-compute hann windows for common configurations
+def precompute_hann_window(win_size, dtype=torch.float32, device='xla'):
+    return torch.hann_window(win_size).to(dtype=dtype, device=device)
+
+def dynamic_range_compression_torch(x, C=1, clip_val=1e-5):
+    """
+    PARAMS
+    ------
+    C: compression factor
+    """
+    # Use clamp_min instead of clamp for better TPU compatibility
+    return torch.log(torch.clamp_min(x, clip_val) * C)
+
+def dynamic_range_decompression_torch(x, C=1):
+    """
+    PARAMS
+    ------
+    C: compression factor used to compress
+    """
+    return torch.exp(x) / C
+
+def spectral_normalize_torch(magnitudes):
+    return dynamic_range_compression_torch(magnitudes)
+
+def spectral_de_normalize_torch(magnitudes):
+    return dynamic_range_decompression_torch(magnitudes)
+
+# Static dictionaries for caching - avoid dynamic dictionary growth
+mel_basis = {}
+hann_window = {}
+
+def spectrogram_torch(y, n_fft, sampling_rate, hop_size, win_size, center=False):
+    # Avoid conditional print statements for TPU efficiency
+    # Instead, use torch.clamp to ensure values are in range
+    y = torch.clamp(y, min=-1.2, max=1.2)
+    
+    # Create a fixed key for caching
+    device_type = y.device.type
+    dtype_name = str(y.dtype).split('.')[-1]
+    key = f"{dtype_name}_{device_type}_{n_fft}_{sampling_rate}_{hop_size}_{win_size}"
+    
+    # Initialize window if not in cache
+    if key not in hann_window:
+        hann_window[key] = precompute_hann_window(win_size, dtype=y.dtype, device=y.device)
+    
+    # Use static padding sizes for TPU
+    pad_left = int((n_fft-hop_size)/2)
+    pad_right = int((n_fft-hop_size)/2)
+    
+    # Pad the input
+    y = torch.nn.functional.pad(y.unsqueeze(1), (pad_left, pad_right), mode='reflect')
+    y = y.squeeze(1)
+    
+    # Compute STFT
+    spec = torch.stft(
+        y, 
+        n_fft, 
+        hop_length=hop_size, 
+        win_length=win_size, 
+        window=hann_window[key],
+        center=center, 
+        pad_mode='reflect', 
+        normalized=False, 
+        onesided=True, 
+        return_complex=False
+    )
+    
+    # Calculate magnitude
+    spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-8)
+    return spec
+
+def spec_to_mel_torch(spec, n_fft, num_mels, sampling_rate, fmin, fmax):
+    # Create a fixed key for caching
+    device_type = spec.device.type
+    dtype_name = str(spec.dtype).split('.')[-1]
+    key = f"{dtype_name}_{device_type}_{n_fft}_{num_mels}_{sampling_rate}_{fmin}_{fmax}"
+    
+    # Initialize mel basis if not in cache
+    if key not in mel_basis:
+        mel_basis[key] = precompute_mel_basis(
+            sampling_rate, n_fft, num_mels, fmin, fmax, 
+            dtype=spec.dtype, device=spec.device
+        )
+    
+    # Apply mel filterbank
+    mel_spec = torch.matmul(mel_basis[key], spec)
+    mel_spec = spectral_normalize_torch(mel_spec)
+    return mel_spec
+
+def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax, center=False):
+    # Clamp values for stability
+    y = torch.clamp(y, min=-1.2, max=1.2)
+    
+    # Create fixed keys for caching
+    device_type = y.device.type
+    dtype_name = str(y.dtype).split('.')[-1]
+    mel_key = f"{dtype_name}_{device_type}_{n_fft}_{num_mels}_{sampling_rate}_{fmin}_{fmax}"
+    win_key = f"{dtype_name}_{device_type}_{win_size}"
+    
+    # Initialize mel basis and window if not in cache
+    if mel_key not in mel_basis:
+        mel_basis[mel_key] = precompute_mel_basis(
+            sampling_rate, n_fft, num_mels, fmin, fmax, 
+            dtype=y.dtype, device=y.device
+        )
+    
+    if win_key not in hann_window:
+        hann_window[win_key] = precompute_hann_window(win_size, dtype=y.dtype, device=y.device)
+    
+    # Use static padding sizes
+    pad_left = int((n_fft-hop_size)/2)
+    pad_right = int((n_fft-hop_size)/2)
+    
+    # Pad the input
+    y = torch.nn.functional.pad(y.unsqueeze(1), (pad_left, pad_right), mode='reflect')
+    y = y.squeeze(1)
+    
+    # Compute STFT
+    spec = torch.stft(
+        y, 
+        n_fft, 
+        hop_length=hop_size, 
+        win_length=win_size, 
+        window=hann_window[win_key],
+        center=center, 
+        pad_mode='reflect', 
+        normalized=False, 
+        onesided=True, 
+        return_complex=False
+    )
+    
+    # Calculate magnitude
+    spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-8)
+    
+    # Apply mel filterbank
+    mel_spec = torch.matmul(mel_basis[mel_key], spec)
+    mel_spec = spectral_normalize_torch(mel_spec)
+    
+    return mel_spec
+
+
 
 if __name__ == "__main__":
     print(f"TPU 사용 가능 여부: {is_tpu_available()}")

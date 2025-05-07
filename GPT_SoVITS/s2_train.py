@@ -696,7 +696,49 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             # 비-TPU 환경에서의 오류 처리
             logging.error(f"학습 중 오류 발생: {str(e)}")
 
-    
+    def _save_checkpoint():
+        if hps.train.if_save_latest == 0:
+            utils.save_checkpoint(
+                net_g,
+                optim_g,
+                hps.train.learning_rate,
+                epoch,
+                os.path.join(
+                    "%s/logs_s2_%s" % (hps.data.exp_dir, hps.model.version),
+                    "G_{}.pth".format(global_step),
+                ),
+            )
+            utils.save_checkpoint(
+                net_d,
+                optim_d,
+                hps.train.learning_rate,
+                epoch,
+                os.path.join(
+                    "%s/logs_s2_%s" % (hps.data.exp_dir, hps.model.version),
+                    "D_{}.pth".format(global_step),
+                ),
+            )
+        else:
+            utils.save_checkpoint(
+                net_g,
+                optim_g,
+                hps.train.learning_rate,
+                epoch,
+                os.path.join(
+                    "%s/logs_s2_%s" % (hps.data.exp_dir, hps.model.version),
+                    "G_{}.pth".format(233333333333),
+                ),
+            )
+            utils.save_checkpoint(
+                net_d,
+                optim_d,
+                hps.train.learning_rate,
+                epoch,
+                os.path.join(
+                    "%s/logs_s2_%s" % (hps.data.exp_dir, hps.model.version),
+                    "D_{}.pth".format(233333333333),
+                ),
+            )
 
     if is_tpu_available():
         # To Save the last checkpoint each VM
