@@ -174,8 +174,8 @@ def run(rank, n_gpus, hps):
         betas=hps.train.betas,
         eps=hps.train.eps,
     )
-    net_g = DDP(net_g, gradient_as_bucket_view=True)
-    net_d = DDP(net_d, gradient_as_bucket_view=True)
+    net_g = DDP(net_g, gradient_as_bucket_view=True, broadcast_buffers=False)
+    net_d = DDP(net_d, gradient_as_bucket_view=True, broadcast_buffers=False)
 
     net_g = net_g.to(device) 
     net_d = net_d.to(device)  
