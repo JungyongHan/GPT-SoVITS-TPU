@@ -196,19 +196,23 @@ def run(rank, n_gpus, hps):
         # epoch_str = 1
         # global_step = 0
     except:  # 如果首次不能加载，加载pretrain
-        traceback.print_exc()
         epoch_str = 1
         global_step = 0
-        if hps.train.pretrained_s2G != "" and hps.train.pretrained_s2G != None and os.path.exists(hps.train.pretrained_s2G):
-            net_g.load_state_dict(
-                torch.load(hps.train.pretrained_s2G, map_location="cpu")["weight"],
-                strict=False,
-            )
-            
-        if hps.train.pretrained_s2D != "" and hps.train.pretrained_s2D != None and os.path.exists(hps.train.pretrained_s2D):
-            net_d.load_state_dict(
-                torch.load(hps.train.pretrained_s2D, map_location="cpu")["weight"],
-            )
+        try:
+            if hps.train.pretrained_s2G != "" and hps.train.pretrained_s2G != None and os.path.exists(hps.train.pretrained_s2G):
+                net_g.load_state_dict(
+                    torch.load(hps.train.pretrained_s2G, map_location="cpu")["weight"],
+                    strict=False,
+                )
+                
+            if hps.train.pretrained_s2D != "" and hps.train.pretrained_s2D != None and os.path.exists(hps.train.pretrained_s2D):
+                net_d.load_state_dict(
+                    torch.load(hps.train.pretrained_s2D, map_location="cpu")["weight"],
+                )
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            raise Exception("Failed to load pre-trained model") from e
 
     net_g = net_g.to(device) 
     net_d = net_d.to(device)  
