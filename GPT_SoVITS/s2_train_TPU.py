@@ -196,7 +196,7 @@ def run(rank, n_gpus, hps):
         # epoch_str = 1
         # global_step = 0
     except:  # 如果首次不能加载，加载pretrain
-        # traceback.print_exc()
+        traceback.print_exc()
         epoch_str = 1
         global_step = 0
         if hps.train.pretrained_s2G != "" and hps.train.pretrained_s2G != None and os.path.exists(hps.train.pretrained_s2G):
