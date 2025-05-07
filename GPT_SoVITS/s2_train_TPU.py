@@ -91,7 +91,7 @@ def run(rank, n_gpus, hps):
 
     n_gpus = xr.world_size()
     rank = xr.global_ordinal()
-    dist.init_process_group('xla', init_method='xla://')
+    dist.init_process_group('xla', init_method='xla://', rank=rank, world_size=n_gpus)
     print(f"XLA:OPENED {rank}/{n_gpus}")
 
     train_dataset = TextAudioSpeakerLoader(hps.data, device_str=f"{device}:{rank}({n_gpus})")  ########
@@ -174,8 +174,8 @@ def run(rank, n_gpus, hps):
         betas=hps.train.betas,
         eps=hps.train.eps,
     )
-    net_g = DDP(net_g, gradient_as_bucket_view=True, broadcast_buffers=False)
-    net_d = DDP(net_d, gradient_as_bucket_view=True, broadcast_buffers=False)
+    net_g = DDP(net_g, gradient_as_bucket_view=True)
+    net_d = DDP(net_d, gradient_as_bucket_view=True)
 
     try:  # 如果能加载自动resume
         _, _, _, epoch_str = utils.load_checkpoint(
@@ -216,8 +216,6 @@ def run(rank, n_gpus, hps):
 
     net_g = net_g.to(device) 
     net_d = net_d.to(device)  
-    xm.broadcast_master_param(net_g)
-    xm.broadcast_master_param(net_d)
 
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
         optim_g,
@@ -232,9 +230,8 @@ def run(rank, n_gpus, hps):
     for _ in range(epoch_str):
         scheduler_g.step()
         scheduler_d.step()
-
+    
     scaler = GradScaler(use_zero_grad=True, enabled=hps.train.fp16_run)
-
     xm.master_print(f"에포크 {epoch_str}부터 학습 시작")
         
     for epoch in range(epoch_str, hps.train.epochs + 1):
@@ -265,8 +262,6 @@ def run(rank, n_gpus, hps):
                 None,
                 None,
             )
-        scheduler_g.step()
-        scheduler_d.step()
             
     xm.master_print("학습 완료")
 
@@ -290,7 +285,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     global global_step
     net_g, net_d = nets
     optim_g, optim_d = optims
-    # scheduler_g, scheduler_d = schedulers
+    scheduler_g, scheduler_d = schedulers
     train_loader, eval_loader = loaders
     if writers is not None:
         writer, writer_eval = writers
@@ -396,6 +391,9 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 _train_update,
                 args=(device, epoch, batch_idx, len(train_loader), loss_gen_all, tracker, writer),
             )
+            scheduler_g.step()
+            scheduler_d.step()
+            xm.mark_step()
                 
             if rank == 0:
                 if global_step % hps.train.log_interval == 0:
