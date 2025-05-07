@@ -174,8 +174,8 @@ def run(rank, n_gpus, hps):
         betas=hps.train.betas,
         eps=hps.train.eps,
     )
-    net_g = DDP(net_g, device_ids=[rank], find_unused_parameters=True, broadcast_buffers=False, gradient_as_bucket_view=True)
-    net_d = DDP(net_d, device_ids=[rank], find_unused_parameters=True, broadcast_buffers=False, gradient_as_bucket_view=True)
+    net_g = DDP(net_g, gradient_as_bucket_view=True)
+    net_d = DDP(net_d, gradient_as_bucket_view=True)
 
     net_g = net_g.to(device) 
     net_d = net_d.to(device)  
@@ -365,7 +365,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             optim_d.zero_grad()
             scaler.scale(loss_disc_all).backward()
             gradients = xm._fetch_gradients(optim_d)
-            xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size())
+            xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
             scaler.unscale_(optim_d)
             scaler.step(optim_d)
 
@@ -385,7 +385,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             optim_g.zero_grad()
             scaler.scale(loss_gen_all).backward()
             gradients = xm._fetch_gradients(optim_g)
-            xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size())
+            xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
             scaler.unscale_(optim_g)
             scaler.step(optim_g)
             scaler.update()
