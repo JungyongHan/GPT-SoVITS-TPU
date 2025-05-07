@@ -299,7 +299,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     net_d.train()
     
     for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
-      with xp.StepTrace('train_imagenet'):
+      with xp.StepTrace('train'):
         with xp.Trace('build_graph'):
             spec, spec_lengths = spec.to(device), spec_lengths.to(device)
             y, y_lengths = y.to(device), y_lengths.to(device)
@@ -393,7 +393,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             )
             scheduler_g.step()
             scheduler_d.step()
-            xm.mark_step()
                 
             if rank == 0:
                 if global_step % hps.train.log_interval == 0:
@@ -633,7 +632,7 @@ def evaluate(hps, generator, eval_loader, writer_eval):
 if __name__ == "__main__":
     if is_tpu_available():
         os.environ['PJRT_DEVICE'] = 'TPU'
-    
+        server = xp.start_server(9012)
         print(f"TPU 멀티프로세싱 시작")
         debug_single_process = False
         torch_xla.launch(
