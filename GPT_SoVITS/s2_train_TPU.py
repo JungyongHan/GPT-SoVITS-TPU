@@ -91,7 +91,7 @@ def run(rank, n_gpus, hps):
 
     n_gpus = xr.world_size()
     rank = xr.global_ordinal()
-    dist.init_process_group('xla', init_method='xla://', rank=rank, world_size=n_gpus)
+    dist.init_process_group('xla', init_method='xla://')
     print(f"XLA:OPENED {rank}/{n_gpus}")
 
     train_dataset = TextAudioSpeakerLoader(hps.data, device_str=f"{device}:{rank}({n_gpus})")  ########
@@ -177,8 +177,6 @@ def run(rank, n_gpus, hps):
     net_g = DDP(net_g, gradient_as_bucket_view=True, broadcast_buffers=False)
     net_d = DDP(net_d, gradient_as_bucket_view=True, broadcast_buffers=False)
 
-    net_g = net_g.to(device) 
-    net_d = net_d.to(device)  
     try:  # 如果能加载自动resume
         _, _, _, epoch_str = utils.load_checkpoint(
             utils.latest_checkpoint_path("%s/logs_s2_%s" % (hps.data.exp_dir, hps.model.version), "D_*.pth"),
@@ -216,21 +214,25 @@ def run(rank, n_gpus, hps):
             traceback.print_exc()
             raise Exception("Failed to load pre-trained model") from e
 
-
+    net_g = net_g.to(device) 
+    net_d = net_d.to(device)  
+    xm.broadcast_master_param(net_g)
+    xm.broadcast_master_param(net_d)
 
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
         optim_g,
-        gamma=hps.train.lr_decay,
+        gamma=hps.train.lr_decay * xr.world_size(),
         last_epoch=-1,
     )
     scheduler_d = torch.optim.lr_scheduler.ExponentialLR(
         optim_d,
-        gamma=hps.train.lr_decay,
+        gamma=hps.train.lr_decay * xr.world_size(),
         last_epoch=-1,
     )
     for _ in range(epoch_str):
         scheduler_g.step()
         scheduler_d.step()
+
     scaler = GradScaler(use_zero_grad=True, enabled=hps.train.fp16_run)
 
     xm.master_print(f"에포크 {epoch_str}부터 학습 시작")
@@ -264,9 +266,7 @@ def run(rank, n_gpus, hps):
                 None,
             )
         scheduler_g.step()
-        xm.mark_step()
         scheduler_d.step()
-        xm.mark_step()
             
     xm.master_print("학습 완료")
 
@@ -396,7 +396,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 _train_update,
                 args=(device, epoch, batch_idx, len(train_loader), loss_gen_all, tracker, writer),
             )
-            xm.mark_step()
                 
             if rank == 0:
                 if global_step % hps.train.log_interval == 0:
