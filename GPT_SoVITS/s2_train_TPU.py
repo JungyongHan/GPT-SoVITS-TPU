@@ -81,8 +81,8 @@ def run(rank, n_gpus, hps):
     device = xm.xla_device()
     n_gpus = xr.world_size()
     rank = xr.global_ordinal()
+    server = xp.start_server(9012)
     if rank == 0:
-        server = xp.start_server(9012)
 
         logger = utils.get_logger(hps.data.exp_dir)
         logger.info(hps)
