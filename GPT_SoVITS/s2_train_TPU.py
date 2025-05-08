@@ -48,7 +48,6 @@ from module.data_utils import (
 )
 from module.mel_processing import mel_spectrogram_torch, spec_to_mel_torch
 from module.losses import discriminator_loss, feature_loss, generator_loss, kl_loss
-# TPU 환경에서는 TPU 호환 버전의 mel_processing 모듈 사용
 
 from module.models import (
     MultiPeriodDiscriminator,
@@ -83,11 +82,7 @@ from torch_xla.amp import syncfree, GradScaler, autocast
 
 def run(rank, n_gpus, hps):
     global global_step
-    xr.initialize_cache('~/tmp/cache', False)
-    torch_xla.experimental.eager_mode(True)
     device = xm.xla_device()
-    n_gpus = xr.world_size()
-    rank = xr.global_ordinal()
     server = xp.start_server(9012)
 
     if rank == 0:
@@ -638,6 +633,14 @@ def evaluate(hps, generator, eval_loader, writer_eval):
     )
     generator.train()
 
+def _map_fn(hps):
+    # torch_xla.core.xla_model._xla_set_rng_state(1)
+    torch_xla.experimental.eager_mode(True)
+    xr.initialize_cache('~/tmp/cache', False)
+    n_gpus = xr.world_size()
+    rank = xr.global_ordinal()
+    run(rank, n_gpus, hps)
+
 
 if __name__ == "__main__":
     if is_tpu_available():
@@ -645,7 +648,7 @@ if __name__ == "__main__":
         debug_single_process = False
         
         torch_xla.launch(
-            run, args=(1, hps), debug_single_process=debug_single_process)
+            _map_fn, args=(hps), debug_single_process=debug_single_process)
 
 
     
