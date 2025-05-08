@@ -93,26 +93,6 @@ def main():
             run, 
             args=(1, hps), 
             debug_single_process=False,
-            # 컴파일 최적화 설정
-            xla_compile=True,
-            xla_dump_optimized_ir=True
-        )
-    else:
-        # GPU 또는 CPU 설정
-        if torch.cuda.is_available():
-            n_gpus = torch.cuda.device_count()
-        else:
-            n_gpus = 1
-        
-        # 일반 멀티프로세싱 실행
-        import torch.multiprocessing as mp
-        mp.spawn(
-            run,
-            nprocs=n_gpus,
-            args=(
-                n_gpus,
-                hps,
-            ),
         )
 
 
