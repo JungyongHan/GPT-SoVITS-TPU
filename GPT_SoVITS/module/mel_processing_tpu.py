@@ -3,23 +3,8 @@ import torch.utils.data
 from librosa.filters import mel as librosa_mel_fn
 import torch_xla.core.xla_model as xm
 import torch_xla
-from torch_xla.experimental import pjrt
 import functools
 
-# TPU 메모리 최적화 설정
-if hasattr(pjrt, 'set_memory_allocation_options'):
-    pjrt.set_memory_allocation_options(
-        preallocate=True,  # 메모리 미리 할당
-        min_size=0.7,      # 최소 메모리 사용량 (전체 메모리의 70%)
-        max_size=0.9       # 최대 메모리 사용량 (전체 메모리의 90%)
-    )
-
-# 역전파 최적화 설정
-if hasattr(torch_xla, 'set_grad_accumulation_options'):
-    torch_xla.set_grad_accumulation_options(
-        buffer_size=128,   # 그래디언트 버퍼 크기
-        parallel=True      # 병렬 처리 활성화
-    )
 
 MAX_WAV_VALUE = 32768.0
 
