@@ -80,8 +80,8 @@ from torch_xla import runtime as xr
 from torch_xla.amp import syncfree, GradScaler, autocast
 
 
-def run(index):
-    global global_step, hps
+def run(index, hps):
+    global global_step
     device = xm.xla_device()
     server = xp.start_server(9012)
     n_gpus = xr.world_size()
@@ -640,7 +640,7 @@ def _map_fn():
     xr.initialize_cache('~/tmp/cache', False)
     debug_single_process = False
     torch_xla.launch(
-        run, debug_single_process=debug_single_process)
+        run, args=(hps), debug_single_process=debug_single_process)
 
 
 if __name__ == "__main__":
