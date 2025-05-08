@@ -644,7 +644,7 @@ if __name__ == "__main__":
         xr.initialize_cache('/tmp/cache', False)
         debug_single_process = False
         torch_xla.launch(
-            run, args=(hps), debug_single_process=debug_single_process)
+            run, args=(hps, ), debug_single_process=debug_single_process)
             
 
 
