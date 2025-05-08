@@ -43,7 +43,8 @@ from module.data_utils import (
     TextAudioSpeakerCollate,
     TextAudioSpeakerLoader,
 )
-from module.mel_processing import mel_spectrogram_torch, spec_to_mel_torch
+# TPU 환경에서는 TPU 호환 버전의 mel_processing 모듈 사용
+from module.mel_processing_tpu import mel_spectrogram_torch, spec_to_mel_torch
 from module.losses import discriminator_loss, feature_loss, generator_loss, kl_loss
 # TPU 환경에서는 TPU 호환 버전의 mel_processing 모듈 사용
 
@@ -61,6 +62,13 @@ torch.backends.cudnn.allow_tf32 = True
 torch.set_float32_matmul_precision("medium")  # 最低精度但最快（也就快一丁点），对于结果造成不了影响
 # from config import pretrained_s2G,pretrained_s2D
 global_step = 0
+# TPU 환경 변수 및 최적화 설정
+os.environ["PJRT_DEVICE"] = "TPU"
+os.environ["XLA_USE_BF16"] = "1"
+os.environ["XLA_TENSOR_ALLOCATOR_MAXSIZE"] = "1000000000"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
+# 최신 PyTorch-XLA 컴파일 최적화 설정
+os.environ["XLA_EXPERIMENTAL"] = "1"
 
 # 디바이스 설정
 
@@ -74,6 +82,39 @@ import torch_xla.debug.metrics as met
 import torch_xla.debug.profiler as xp
 from torch_xla import runtime as xr
 from torch_xla.amp import syncfree, GradScaler, autocast
+from torch_xla.experimental import pjrt
+
+
+def main():
+    # TPU 환경 설정
+    if is_tpu_available():
+        print(f"TPU 멀티프로세싱 시작")
+        # 최신 PyTorch-XLA 런처 사용
+        torch_xla.launch(
+            run, 
+            args=(1, hps), 
+            debug_single_process=False,
+            # 컴파일 최적화 설정
+            xla_compile=True,
+            xla_dump_optimized_ir=True
+        )
+    else:
+        # GPU 또는 CPU 설정
+        if torch.cuda.is_available():
+            n_gpus = torch.cuda.device_count()
+        else:
+            n_gpus = 1
+        
+        # 일반 멀티프로세싱 실행
+        import torch.multiprocessing as mp
+        mp.spawn(
+            run,
+            nprocs=n_gpus,
+            args=(
+                n_gpus,
+                hps,
+            ),
+        )
 
 
 def run(rank, n_gpus, hps):
@@ -298,165 +339,224 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     net_g.train()
     net_d.train()
     
+    # 모델 스텝 함수 정의 - 컴파일을 위해 분리
+    def discriminator_step_fn(ssl, spec, spec_lengths, y, y_lengths, text, text_lengths):
+        with autocast(device=device, enabled=hps.train.fp16_run):
+            # Discriminator 연산
+            y_hat, kl_ssl, ids_slice, x_mask, z_mask, (z, z_p, m_p, logs_p, m_q, logs_q), stats_ssl = net_g(ssl, spec, spec_lengths, text, text_lengths)
+            y_sliced = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)
+            y_d_hat_r, y_d_hat_g, _, _ = net_d(y_sliced, y_hat.detach())
+            
+            with autocast(device=device, enabled=False):
+                loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(y_d_hat_r, y_d_hat_g)
+                loss_disc_all = loss_disc
+        
+        return loss_disc_all, y_hat, kl_ssl, ids_slice, z_mask, (z, z_p, m_p, logs_p, m_q, logs_q), stats_ssl, y_sliced
+    
+    def generator_step_fn(y, y_hat, y_mel, y_hat_mel, kl_ssl, z_p, logs_q, m_p, logs_p, z_mask):
+        with autocast(device=device, enabled=hps.train.fp16_run):
+            # Generator 연산
+            y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
+            
+            with autocast(device=device, enabled=False):
+                loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
+                loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
+                loss_fm = feature_loss(fmap_r, fmap_g)
+                loss_gen, losses_gen = generator_loss(y_d_hat_g)
+                loss_gen_all = loss_gen + loss_fm + loss_mel + kl_ssl * 1 + loss_kl
+        
+        return loss_gen_all, loss_fm, loss_mel, loss_gen, losses_gen
+    
+    # 컴파일된 스텝 함수 생성 - 최신 PyTorch-XLA API 사용
+    try:
+        # 최신 PyTorch-XLA 버전에서는 다음과 같이 컴파일
+        compiled_discriminator_step = torch_xla.compile(
+            discriminator_step_fn, 
+            backend="xla", 
+            fullgraph=True,
+            name="discriminator_step"
+        )
+        
+        compiled_generator_step = torch_xla.compile(
+            generator_step_fn, 
+            backend="xla", 
+            fullgraph=True,
+            name="generator_step"
+        )
+        xm.master_print("최신 PyTorch-XLA API를 사용하여 함수 컴파일 완료")
+    except Exception as e:
+        xm.master_print(f"컴파일 중 오류 발생: {e}")
+        xm.master_print("기본 함수를 사용합니다.")
+        # 컴파일에 실패한 경우 원래 함수 사용
+        compiled_discriminator_step = discriminator_step_fn
+        compiled_generator_step = generator_step_fn
+    
+    # 컴파일 상태 확인
+    try:
+        if hasattr(torch_xla.experimental.pjrt, 'get_compile_options'):
+            xm.master_print(f"컴파일 설정 완료: {torch_xla.experimental.pjrt.get_compile_options()}")
+        
+        if hasattr(torch_xla.experimental.pjrt, 'memory_info'):
+            xm.master_print(f"TPU 메모리 정보: {torch_xla.experimental.pjrt.memory_info()}")
+        
+        xm.master_print(f"TPU 디바이스 정보: {xr.global_runtime_device_count()} 디바이스 사용 중")
+        xm.master_print(f"TPU 메모리 할당 정보: {met.metrics_report()}")
+    except Exception as e:
+        xm.master_print(f"TPU 정보 확인 중 오류: {e}")
+    
+    # 컴파일 최적화 힌트 설정
+    xm.mark_step("컴파일 준비 완료")
+    
     for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
         spec, spec_lengths = spec.to(device), spec_lengths.to(device)
         y, y_lengths = y.to(device), y_lengths.to(device)
         text, text_lengths = text.to(device), text_lengths.to(device)
         ssl.requires_grad = False
+        ssl = ssl.to(device)
+        
         with xp.StepTrace('train'):
-            with xp.Trace('build_graph'):
-                with autocast(device=device, enabled=hps.train.fp16_run):
-                    xm.add_step_closure( _debug_print, args=(device, f"forward") )
-                    # Move ssl to device just before use inside autocast
-                    ssl = ssl.to(device)
-                    (
-                        y_hat,
-                        kl_ssl,
-                        ids_slice,
-                        x_mask,
-                        z_mask,
-                        (z, z_p, m_p, logs_p, m_q, logs_q),
-                        stats_ssl,
-                    ) = net_g(ssl, spec, spec_lengths, text, text_lengths)
-                    xm.add_step_closure( _debug_print, args=(device, f"forward done") )
-                    mel = spec_to_mel_torch(
-                        spec,
-                        hps.data.filter_length,
-                        hps.data.n_mel_channels,
-                        hps.data.sampling_rate,
-                        hps.data.mel_fmin,
-                        hps.data.mel_fmax,
-                    )
-                    xm.add_step_closure( _debug_print, args=(device, f"mel done") )
-
-                    y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
-                    y_hat_mel = mel_spectrogram_torch(
-                        y_hat.squeeze(1),
-                        hps.data.filter_length,
-                        hps.data.n_mel_channels,
-                        hps.data.sampling_rate,
-                        hps.data.hop_length,
-                        hps.data.win_length,
-                        hps.data.mel_fmin,
-                        hps.data.mel_fmax,
-                    )
-                    xm.add_step_closure( _debug_print, args=(device, f"y_mel done") )
-                    y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
-
-                    # Discriminator
-                    y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
-                    xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
-                    with autocast(device=device, enabled=False):
-                    
-                        loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
-                            y_d_hat_r,
-                            y_d_hat_g,
-                        )
-                        loss_disc_all = loss_disc
-                        xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
-                
-                xm.add_step_closure( _debug_print, args=(device, f"backward") )
-                optim_d.zero_grad()
-                scaler.scale(loss_disc_all).backward()
-                gradients = xm._fetch_gradients(optim_d)
-                xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
-                scaler.unscale_(optim_d)
-                scaler.step(optim_d)
-
-                xm.add_step_closure( _debug_print, args=(device, f"backward done") )
-                with autocast(device=device, enabled=hps.train.fp16_run):
-                    # Generator
-                    y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
-                    with autocast(device=device, enabled=False):
-                        loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
-                        loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
-
-                        loss_fm = feature_loss(fmap_r, fmap_g)
-                        loss_gen, losses_gen = generator_loss(y_d_hat_g)
-                        loss_gen_all = loss_gen + loss_fm + loss_mel + kl_ssl * 1 + loss_kl
-
-                xm.add_step_closure( _debug_print, args=(device, f"loss_gen done") )
-                optim_g.zero_grad()
-                scaler.scale(loss_gen_all).backward()
-                gradients = xm._fetch_gradients(optim_g)
-                xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
-                scaler.unscale_(optim_g)
-                scaler.step(optim_g)
-                scaler.update()
-
-                xm.add_step_closure( _debug_print, args=(device, f"backward done") )
-
-                xm.add_step_closure(
-                    _train_update,
-                    args=(device, epoch, batch_idx, len(train_loader), loss_gen_all, tracker, writer),
+            # 멜 스펙트로그램 계산 - 컴파일된 함수 사용
+            with autocast(device=device, enabled=hps.train.fp16_run):
+                mel = spec_to_mel_torch(
+                    spec,
+                    hps.data.filter_length,
+                    hps.data.n_mel_channels,
+                    hps.data.sampling_rate,
+                    hps.data.mel_fmin,
+                    hps.data.mel_fmax
                 )
-                scheduler_g.step()
-                scheduler_d.step()
+            
+            # Discriminator 단계 - 컴파일된 함수 사용
+            loss_disc_all, y_hat, kl_ssl, ids_slice, z_mask, (z, z_p, m_p, logs_p, m_q, logs_q), stats_ssl, y_sliced = compiled_discriminator_step(
+                ssl, spec, spec_lengths, y, y_lengths, text, text_lengths
+            )
+            
+            # 멜 스펙트로그램 처리
+            y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
+            # 컴파일된 mel_spectrogram_torch 함수 사용
+            with autocast(device=device, enabled=hps.train.fp16_run):
+                y_hat_mel = mel_spectrogram_torch(
+                    y_hat.squeeze(1),
+                    hps.data.filter_length,
+                    hps.data.n_mel_channels,
+                    hps.data.sampling_rate,
+                    hps.data.hop_length,
+                    hps.data.win_length,
+                    hps.data.mel_fmin,
+                    hps.data.mel_fmax
+                )
+            
+            # Discriminator 역전파
+            optim_d.zero_grad()
+            scaler.scale(loss_disc_all).backward()
+            gradients = xm._fetch_gradients(optim_d)
+            xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
+            scaler.unscale_(optim_d)
+            scaler.step(optim_d)
+            
+            # Generator 단계 - 컴파일된 함수 사용
+            loss_gen_all, loss_fm, loss_mel, loss_gen, losses_gen = compiled_generator_step(
+                y_sliced, y_hat, y_mel, y_hat_mel, kl_ssl, z_p, logs_q, m_p, logs_p, z_mask
+            )
+            
+            # 손실 값 로깅 (디버깅용)
+            if rank == 0 and batch_idx % 10 == 0:
+                xm.master_print(f"Generator 손실: {loss_gen_all.item():.4f}, Mel 손실: {loss_mel.item():.4f}, KL 손실: {kl_ssl.item():.4f}")
+                # XLA 메트릭 로깅
+                xm.master_print(f"컴파일 상태: {torch_xla.experimental.pjrt.is_compiled(compiled_generator_step)}")
+                xm.master_print(f"컴파일 상태: {torch_xla.experimental.pjrt.is_compiled(compiled_discriminator_step)}")
+                # 메모리 사용량 출력
+                xm.master_print(f"메모리 사용량: {torch_xla.experimental.pjrt.memory_info()}")
+                # 컴파일 통계 출력
+                if hasattr(torch_xla, 'get_compile_stats'):
+                    xm.master_print(f"컴파일 통계: {torch_xla.get_compile_stats()}")
                     
-                if rank == 0:
-                    if global_step % hps.train.log_interval == 0:
-                        lr = optim_g.param_groups[0]["lr"]
-                        losses = [loss_disc, loss_gen, loss_fm, loss_mel, kl_ssl, loss_kl]
-                        logger.info(
-                            "Train Epoch: {} [{:.0f}%]".format(
-                                epoch,
-                                100.0 * batch_idx / len(train_loader),
-                            )
+            # 메모리 최적화를 위한 중간 변수 정리
+            del y_hat_mel, y_mel
+            
+            # Generator 역전파
+            optim_g.zero_grad()
+            scaler.scale(loss_gen_all).backward()
+            gradients = xm._fetch_gradients(optim_g)
+            xm.all_reduce('sum', gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
+            scaler.unscale_(optim_g)
+            scaler.step(optim_g)
+            scaler.update()
+            
+            # 스케줄러 업데이트
+            scheduler_g.step()
+            scheduler_d.step()
+            
+            # 진행 상황 업데이트
+            xm.add_step_closure(
+                _train_update,
+                args=(device, epoch, batch_idx, len(train_loader), loss_gen_all, tracker, writer),
+            )
+                    
+            if rank == 0:
+                if global_step % hps.train.log_interval == 0:
+                    lr = optim_g.param_groups[0]["lr"]
+                    losses = [loss_disc, loss_gen, loss_fm, loss_mel, kl_ssl, loss_kl]
+                    logger.info(
+                        "Train Epoch: {} [{:.0f}%]".format(
+                            epoch,
+                            100.0 * batch_idx / len(train_loader),
                         )
-                        logger.info([x.item() for x in losses] + [global_step, lr])
-                        grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
+                    )
+                    logger.info([x.item() for x in losses] + [global_step, lr])
+                    grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
 
-                        grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
+                    grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
 
-                        scalar_dict = {
-                            "loss/g/total": loss_gen_all,
-                            "loss/d/total": loss_disc_all,
-                            "learning_rate": lr,
-                            "grad_norm_d": grad_norm_d,
-                            "grad_norm_g": grad_norm_g,
+                    scalar_dict = {
+                        "loss/g/total": loss_gen_all,
+                        "loss/d/total": loss_disc_all,
+                        "learning_rate": lr,
+                        "grad_norm_d": grad_norm_d,
+                        "grad_norm_g": grad_norm_g,
+                    }
+                    scalar_dict.update(
+                        {
+                            "loss/g/fm": loss_fm,
+                            "loss/g/mel": loss_mel,
+                            "loss/g/kl_ssl": kl_ssl,
+                            "loss/g/kl": loss_kl,
                         }
-                        scalar_dict.update(
-                            {
-                                "loss/g/fm": loss_fm,
-                                "loss/g/mel": loss_mel,
-                                "loss/g/kl_ssl": kl_ssl,
-                                "loss/g/kl": loss_kl,
-                            }
-                        )
+                    )
 
-                        # scalar_dict.update({"loss/g/{}".format(i): v for i, v in enumerate(losses_gen)})
-                        # scalar_dict.update({"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)})
-                        # scalar_dict.update({"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)})
-                        image_dict = None
-                        try:  ###Some people installed the wrong version of matplotlib.
-                            image_dict = {
-                                "slice/mel_org": utils.plot_spectrogram_to_numpy(
-                                    y_mel[0].data.cpu().numpy(),
-                                ),
-                                "slice/mel_gen": utils.plot_spectrogram_to_numpy(
-                                    y_hat_mel[0].data.cpu().numpy(),
-                                ),
-                                "all/mel": utils.plot_spectrogram_to_numpy(
-                                    mel[0].data.cpu().numpy(),
-                                ),
-                                "all/stats_ssl": utils.plot_spectrogram_to_numpy(
-                                    stats_ssl[0].data.cpu().numpy(),
-                                ),
-                            }
-                        except:
-                            pass
-                        if image_dict:
-                            utils.summarize( writer=writer, global_step=global_step, images=image_dict, scalars=scalar_dict, )
-                        else:
-                            utils.summarize( writer=writer, global_step=global_step, scalars=scalar_dict, )
-                        metrics = mcu.parse_metrics_report(met.metrics_report())
-                        aten_ops_sum = 0
-                        for metric_name, metric_value in metrics.items():
-                            if metric_name.find('aten::') == 0:
-                                aten_ops_sum += metric_value
-                            writer.add_scalar(metric_name, metric_value, global_step)
-                            writer.add_scalar('aten_ops_sum', aten_ops_sum, global_step)
-                global_step += 1
+                    # scalar_dict.update({"loss/g/{}".format(i): v for i, v in enumerate(losses_gen)})
+                    # scalar_dict.update({"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)})
+                    # scalar_dict.update({"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)})
+                    image_dict = None
+                    try:  ###Some people installed the wrong version of matplotlib.
+                        image_dict = {
+                            "slice/mel_org": utils.plot_spectrogram_to_numpy(
+                                y_mel[0].data.cpu().numpy(),
+                            ),
+                            "slice/mel_gen": utils.plot_spectrogram_to_numpy(
+                                y_hat_mel[0].data.cpu().numpy(),
+                            ),
+                            "all/mel": utils.plot_spectrogram_to_numpy(
+                                mel[0].data.cpu().numpy(),
+                            ),
+                            "all/stats_ssl": utils.plot_spectrogram_to_numpy(
+                                stats_ssl[0].data.cpu().numpy(),
+                            ),
+                        }
+                    except:
+                        pass
+                    if image_dict:
+                        utils.summarize( writer=writer, global_step=global_step, images=image_dict, scalars=scalar_dict, )
+                    else:
+                        utils.summarize( writer=writer, global_step=global_step, scalars=scalar_dict, )
+                    metrics = mcu.parse_metrics_report(met.metrics_report())
+                    aten_ops_sum = 0
+                    for metric_name, metric_value in metrics.items():
+                        if metric_name.find('aten::') == 0:
+                            aten_ops_sum += metric_value
+                        writer.add_scalar(metric_name, metric_value, global_step)
+                        writer.add_scalar('aten_ops_sum', aten_ops_sum, global_step)
+            global_step += 1
 
     
 
@@ -629,12 +729,7 @@ def evaluate(hps, generator, eval_loader, writer_eval):
 
 
 if __name__ == "__main__":
-    if is_tpu_available():
-        os.environ['PJRT_DEVICE'] = 'TPU'
-        print(f"TPU 멀티프로세싱 시작")
-        debug_single_process = False
-        torch_xla.launch(
-            run, args=(1, hps), debug_single_process=debug_single_process)
+    main()
 
 
     
