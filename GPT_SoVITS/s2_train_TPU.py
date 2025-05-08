@@ -634,7 +634,7 @@ def evaluate(hps, generator, eval_loader, writer_eval):
     )
     generator.train()
 
-def _map_fn():
+def _map_fn(hps):
     # torch_xla.core.xla_model._xla_set_rng_state(1)
     torch_xla.experimental.eager_mode(True)
     xr.initialize_cache('~/tmp/cache', False)
@@ -646,7 +646,7 @@ def _map_fn():
 if __name__ == "__main__":
     if is_tpu_available():
         print(f"TPU 멀티프로세싱 시작")
-        _map_fn()
+        _map_fn(hps)
         
 
 
