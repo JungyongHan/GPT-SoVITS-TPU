@@ -82,7 +82,6 @@ import torch_xla.debug.metrics as met
 import torch_xla.debug.profiler as xp
 from torch_xla import runtime as xr
 from torch_xla.amp import syncfree, GradScaler, autocast
-from torch_xla.experimental import pjrt
 
 
 def main():
