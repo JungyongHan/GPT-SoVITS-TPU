@@ -400,8 +400,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     except Exception as e:
         xm.master_print(f"TPU 정보 확인 중 오류: {e}")
     
-    # 컴파일 최적화 힌트 설정
-    xm.mark_step("컴파일 준비 완료")
     
     for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
         spec, spec_lengths = spec.to(device), spec_lengths.to(device)
