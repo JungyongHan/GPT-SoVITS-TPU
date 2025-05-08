@@ -9,7 +9,7 @@ hps = utils.get_hparams(stage=2)
 os.environ["CUDA_VISIBLE_DEVICES"] = hps.train.gpu_numbers.replace("-", ",")
 os.environ["PJRT_DEVICE"] = "TPU"
 os.environ["XLA_USE_BF16"] = "1" 
-os.environ["PT_XLA_DEBUG_LEVEL"] = "1"
+os.environ["PT_XLA_DEBUG_LEVEL"] = "0"
 
 # TPU 지원 추가
 import sys
