@@ -311,96 +311,95 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         y, y_lengths = y.to(device), y_lengths.to(device)
         text, text_lengths = text.to(device), text_lengths.to(device)
         ssl.requires_grad = False
-        with xp.StepTrace('train'):
-            with xp.Trace('build_graph'):
-                with autocast(device=device, enabled=hps.train.fp16_run):
-                    xm.add_step_closure( _debug_print, args=(device, f"forward") )
-                    # Move ssl to device just before use inside autocast
-                    ssl = ssl.to(device)
-                    (
-                        y_hat,
-                        kl_ssl,
-                        ids_slice,
-                        x_mask,
-                        z_mask,
-                        (z, z_p, m_p, logs_p, m_q, logs_q),
-                        stats_ssl,
-                    ) = compiled_net_g(ssl, spec, spec_lengths, text, text_lengths)
-                    xm.add_step_closure( _debug_print, args=(device, f"forward done") )
-                    mel = spec_to_mel_torch(
-                        spec,
-                        hps.data.filter_length,
-                        hps.data.n_mel_channels,
-                        hps.data.sampling_rate,
-                        hps.data.mel_fmin,
-                        hps.data.mel_fmax,
-                    )
-                    xm.add_step_closure( _debug_print, args=(device, f"mel done") )
+        with autocast(device=device, enabled=hps.train.fp16_run):
+            xm.add_step_closure( _debug_print, args=(device, f"forward") )
+            # Move ssl to device just before use inside autocast
+            ssl = ssl.to(device)
+            (
+                y_hat,
+                kl_ssl,
+                ids_slice,
+                x_mask,
+                z_mask,
+                (z, z_p, m_p, logs_p, m_q, logs_q),
+                stats_ssl,
+            ) = compiled_net_g(ssl, spec, spec_lengths, text, text_lengths)
+            xm.add_step_closure( _debug_print, args=(device, f"forward done") )
+            mel = spec_to_mel_torch(
+                spec,
+                hps.data.filter_length,
+                hps.data.n_mel_channels,
+                hps.data.sampling_rate,
+                hps.data.mel_fmin,
+                hps.data.mel_fmax,
+            )
+            xm.add_step_closure( _debug_print, args=(device, f"mel done") )
 
-                    y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
-                    y_hat_mel = mel_spectrogram_torch(
-                        y_hat.squeeze(1),
-                        hps.data.filter_length,
-                        hps.data.n_mel_channels,
-                        hps.data.sampling_rate,
-                        hps.data.hop_length,
-                        hps.data.win_length,
-                        hps.data.mel_fmin,
-                        hps.data.mel_fmax,
-                    )
-                    xm.add_step_closure( _debug_print, args=(device, f"y_mel done") )
-                    y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
+            y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
+            y_hat_mel = mel_spectrogram_torch(
+                y_hat.squeeze(1),
+                hps.data.filter_length,
+                hps.data.n_mel_channels,
+                hps.data.sampling_rate,
+                hps.data.hop_length,
+                hps.data.win_length,
+                hps.data.mel_fmin,
+                hps.data.mel_fmax,
+            )
+            xm.add_step_closure( _debug_print, args=(device, f"y_mel done") )
+            y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
 
-                    # Discriminator
-                    y_d_hat_r, y_d_hat_g, _, _ = compiled_net_d(y, y_hat.detach())
-                    xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
-                    with autocast(device=device, enabled=False):
-                    
-                        loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
-                            y_d_hat_r,
-                            y_d_hat_g,
-                        )
-                        loss_disc_all = loss_disc
-                        xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
-                
-                xm.add_step_closure( _debug_print, args=(device, f"backward") )
-                optim_d.zero_grad()
-                scaler.scale(loss_disc_all).backward()
-                gradients = xm._fetch_gradients(optim_d)
-                xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
-                scaler.unscale_(optim_d)
-                scaler.step(optim_d)
-
-                xm.add_step_closure( _debug_print, args=(device, f"backward done") )
-                with autocast(device=device, enabled=hps.train.fp16_run):
-                    # Generator
-                    y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = compiled_net_d(y, y_hat)
-                    with autocast(device=device, enabled=False):
-                        loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
-                        loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
-
-                        loss_fm = feature_loss(fmap_r, fmap_g)
-                        loss_gen, losses_gen = generator_loss(y_d_hat_g)
-                        loss_gen_all = loss_gen + loss_fm + loss_mel + kl_ssl * 1 + loss_kl
-
-                xm.add_step_closure( _debug_print, args=(device, f"loss_gen done") )
-                optim_g.zero_grad()
-                scaler.scale(loss_gen_all).backward()
-                gradients = xm._fetch_gradients(optim_g)
-                xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
-                scaler.unscale_(optim_g)
-                scaler.step(optim_g)
-                scaler.update()
-
-                xm.add_step_closure( _debug_print, args=(device, f"backward done") )
-
-                xm.add_step_closure(
-                    _train_update,
-                    args=(device, epoch, batch_idx, len(train_loader), loss_gen_all, tracker, writer),
+            # Discriminator
+            y_d_hat_r, y_d_hat_g, _, _ = compiled_net_d(y, y_hat.detach())
+            xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
+            with autocast(device=device, enabled=False):
+            
+                loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
+                    y_d_hat_r,
+                    y_d_hat_g,
                 )
-                scheduler_g.step()
-                scheduler_d.step()
-                    
+                loss_disc_all = loss_disc
+                xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
+        
+        xm.add_step_closure( _debug_print, args=(device, f"backward") )
+        optim_d.zero_grad()
+        scaler.scale(loss_disc_all).backward()
+        gradients = xm._fetch_gradients(optim_d)
+        xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
+        scaler.unscale_(optim_d)
+        scaler.step(optim_d)
+
+        xm.add_step_closure( _debug_print, args=(device, f"backward done") )
+        with autocast(device=device, enabled=hps.train.fp16_run):
+            # Generator
+            y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = compiled_net_d(y, y_hat)
+            with autocast(device=device, enabled=False):
+                loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
+                loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
+
+                loss_fm = feature_loss(fmap_r, fmap_g)
+                loss_gen, losses_gen = generator_loss(y_d_hat_g)
+                loss_gen_all = loss_gen + loss_fm + loss_mel + kl_ssl * 1 + loss_kl
+
+        xm.add_step_closure( _debug_print, args=(device, f"loss_gen done") )
+        optim_g.zero_grad()
+        scaler.scale(loss_gen_all).backward()
+        gradients = xm._fetch_gradients(optim_g)
+        xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
+        scaler.unscale_(optim_g)
+        scaler.step(optim_g)
+        scaler.update()
+
+        xm.add_step_closure( _debug_print, args=(device, f"backward done") )
+
+        xm.add_step_closure(
+            _train_update,
+            args=(device, epoch, batch_idx, len(train_loader), loss_gen_all, tracker, writer),
+        )
+        scheduler_g.step()
+        scheduler_d.step()
+
+        xm.mark_step()
         if rank == 0:
             if global_step % hps.train.log_interval == 0:
                 lr = optim_g.param_groups[0]["lr"]
