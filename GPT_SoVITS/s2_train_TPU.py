@@ -87,7 +87,7 @@ def run(index, hps):
     n_gpus = xr.world_size()
     rank = xr.global_ordinal()
     if rank == 0:
-        # os.environ["PT_XLA_DEBUG_LEVEL"] = "2"
+        os.environ["PT_XLA_DEBUG_LEVEL"] = "2"
         logger = utils.get_logger(hps.data.exp_dir)
         logger.info(hps)
         # utils.check_git_hash(hps.s2_ckpt_dir)
