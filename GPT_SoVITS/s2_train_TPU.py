@@ -80,11 +80,12 @@ from torch_xla import runtime as xr
 from torch_xla.amp import syncfree, GradScaler, autocast
 
 
-def run(rank, n_gpus, hps):
+def run(hps):
     global global_step
     device = xm.xla_device()
     server = xp.start_server(9012)
-
+    n_gpus = xr.world_size()
+    rank = xr.global_ordinal()
     if rank == 0:
         print("The master IP is :", xr.get_master_ip())
         logger = utils.get_logger(hps.data.exp_dir)
@@ -637,18 +638,16 @@ def _map_fn(hps):
     # torch_xla.core.xla_model._xla_set_rng_state(1)
     torch_xla.experimental.eager_mode(True)
     xr.initialize_cache('~/tmp/cache', False)
-    n_gpus = xr.world_size()
-    rank = xr.global_ordinal()
-    run(rank, n_gpus, hps)
+    torch_xla.launch(
+            run, args=(hps), debug_single_process=debug_single_process)
 
 
 if __name__ == "__main__":
     if is_tpu_available():
         print(f"TPU 멀티프로세싱 시작")
         debug_single_process = False
+        _map_fn(hps)
         
-        torch_xla.launch(
-            _map_fn, args=(hps), debug_single_process=debug_single_process)
 
 
     
