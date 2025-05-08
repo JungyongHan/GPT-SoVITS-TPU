@@ -214,6 +214,7 @@ def get_hparams(init=True, stage=1):
     with open(config_path, "r") as f:
         data = f.read()
     config = json.loads(data)
+    print("config", config)
 
     hparams = HParams(**config)
     hparams.pretrain = args.pretrain
