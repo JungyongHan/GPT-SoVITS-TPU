@@ -7,9 +7,6 @@ import utils
 
 hps = utils.get_hparams(stage=2)
 os.environ["CUDA_VISIBLE_DEVICES"] = hps.train.gpu_numbers.replace("-", ",")
-os.environ["PJRT_DEVICE"] = "TPU"
-os.environ["XLA_USE_BF16"] = "1" 
-os.environ["PT_XLA_DEBUG_LEVEL"] = "2"
 
 # TPU 지원 추가
 import sys
@@ -48,6 +45,7 @@ from module.data_utils import (
 )
 from module.mel_processing import mel_spectrogram_torch, spec_to_mel_torch
 from module.losses import discriminator_loss, feature_loss, generator_loss, kl_loss
+# TPU 환경에서는 TPU 호환 버전의 mel_processing 모듈 사용
 
 from module.models import (
     MultiPeriodDiscriminator,
@@ -64,7 +62,9 @@ torch.set_float32_matmul_precision("medium")  # 最低精度但最快（也就�
 # from config import pretrained_s2G,pretrained_s2D
 global_step = 0
 # TPU 환경 변수 및 BF16 사용 권장
-
+os.environ["PJRT_DEVICE"] = "TPU"
+os.environ["XLA_USE_BF16"] = "1" 
+os.environ["PT_XLA_DEBUG_LEVEL"] = "2"
 
 # 디바이스 설정
 
@@ -80,12 +80,15 @@ from torch_xla import runtime as xr
 from torch_xla.amp import syncfree, GradScaler, autocast
 
 
-def run(hps):
+def run(rank, n_gpus, hps):
     global global_step
+    xr.initialize_cache('~/tmp/cache', False)
+    torch_xla.experimental.eager_mode(True)
     device = xm.xla_device()
-    server = xp.start_server(9012)
     n_gpus = xr.world_size()
     rank = xr.global_ordinal()
+    server = xp.start_server(9012)
+
     if rank == 0:
         print("The master IP is :", xr.get_master_ip())
         logger = utils.get_logger(hps.data.exp_dir)
@@ -634,20 +637,14 @@ def evaluate(hps, generator, eval_loader, writer_eval):
     )
     generator.train()
 
-def _map_fn(hps):
-    # torch_xla.core.xla_model._xla_set_rng_state(1)
-    torch_xla.experimental.eager_mode(True)
-    xr.initialize_cache('~/tmp/cache', False)
-    torch_xla.launch(
-            run, args=(hps), debug_single_process=debug_single_process)
-
 
 if __name__ == "__main__":
     if is_tpu_available():
         print(f"TPU 멀티프로세싱 시작")
         debug_single_process = False
-        _map_fn(hps)
         
+        torch_xla.launch(
+            run, args=(1, hps), debug_single_process=debug_single_process)
 
 
     
