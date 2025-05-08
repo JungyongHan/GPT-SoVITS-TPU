@@ -370,11 +370,11 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             name="mel_spectrogram_torch"
         )
 
-        compiled_spectrogram_torch = torch_xla.compile(
-            spectrogram_torch,
+        compiled_spec_to_mel_torch = torch_xla.compile(
+            spec_to_mel_torch,
             backend="xla",
             fullgraph=True,
-            name="spectrogram_torch"
+            name="spec_to_mel_torch"
         )
 
         xm.master_print("최신 PyTorch-XLA API를 사용하여 함수 컴파일 완료")
@@ -385,7 +385,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         compiled_discriminator_step = discriminator_step_fn
         compiled_generator_step = generator_step_fn
         compiled_mel_spectrogram_torch = mel_spectrogram_torch
-        compiled_spectrogram_torch = spectrogram_torch
+        compiled_spec_to_mel_torch = spec_to_mel_torch
     
     # 컴파일 상태 확인
     try:
