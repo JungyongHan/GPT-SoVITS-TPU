@@ -413,7 +413,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         with xp.StepTrace('train'):
             # 멜 스펙트로그램 계산 - 컴파일된 함수 사용
             with autocast(device=device, enabled=hps.train.fp16_run):
-                mel = compiled_spectrogram_torch(
+                mel = compiled_spec_to_mel_torch(
                     spec,
                     hps.data.filter_length,
                     hps.data.n_mel_channels,
