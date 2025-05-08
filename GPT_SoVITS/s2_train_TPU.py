@@ -80,7 +80,7 @@ from torch_xla import runtime as xr
 from torch_xla.amp import syncfree, GradScaler, autocast
 
 
-def run():
+def run(index):
     global global_step, hps
     device = xm.xla_device()
     server = xp.start_server(9012)
