@@ -44,7 +44,7 @@ from module.data_utils import (
     TextAudioSpeakerLoader,
 )
 # TPU 환경에서는 TPU 호환 버전의 mel_processing 모듈 사용
-from module.mel_processing_tpu import mel_spectrogram_torch, spec_to_mel_torch
+from module.mel_processing import mel_spectrogram_torch, spec_to_mel_torch
 from module.losses import discriminator_loss, feature_loss, generator_loss, kl_loss
 # TPU 환경에서는 TPU 호환 버전의 mel_processing 모듈 사용
 
@@ -362,6 +362,21 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             fullgraph=True,
             name="generator_step"
         )
+
+        compiled_mel_spectrogram_torch = torch_xla.compile(
+            mel_spectrogram_torch,
+            backend="xla",
+            fullgraph=True,
+            name="mel_spectrogram_torch"
+        )
+
+        compiled_spectrogram_torch = torch_xla.compile(
+            spectrogram_torch,
+            backend="xla",
+            fullgraph=True,
+            name="spectrogram_torch"
+        )
+
         xm.master_print("최신 PyTorch-XLA API를 사용하여 함수 컴파일 완료")
     except Exception as e:
         xm.master_print(f"컴파일 중 오류 발생: {e}")
@@ -369,6 +384,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         # 컴파일에 실패한 경우 원래 함수 사용
         compiled_discriminator_step = discriminator_step_fn
         compiled_generator_step = generator_step_fn
+        compiled_mel_spectrogram_torch = mel_spectrogram_torch
+        compiled_spectrogram_torch = spectrogram_torch
     
     # 컴파일 상태 확인
     try:
@@ -396,7 +413,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         with xp.StepTrace('train'):
             # 멜 스펙트로그램 계산 - 컴파일된 함수 사용
             with autocast(device=device, enabled=hps.train.fp16_run):
-                mel = spec_to_mel_torch(
+                mel = compiled_spectrogram_torch(
                     spec,
                     hps.data.filter_length,
                     hps.data.n_mel_channels,
@@ -414,7 +431,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
             # 컴파일된 mel_spectrogram_torch 함수 사용
             with autocast(device=device, enabled=hps.train.fp16_run):
-                y_hat_mel = mel_spectrogram_torch(
+                y_hat_mel = compiled_mel_spectrogram_torch(
                     y_hat.squeeze(1),
                     hps.data.filter_length,
                     hps.data.n_mel_channels,
