@@ -88,7 +88,6 @@ def run(index):
     rank = xr.global_ordinal()
     if rank == 0:
         os.environ["PT_XLA_DEBUG_LEVEL"] = "2"
-        print("The master IP is :", xr.get_master_ip())
         logger = utils.get_logger(hps.data.exp_dir)
         logger.info(hps)
         # utils.check_git_hash(hps.s2_ckpt_dir)
