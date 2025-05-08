@@ -101,9 +101,6 @@ try:
     compile_options = {
         "backend": "xla",
         "fullgraph": True,
-        "min_compilation_time": 0,  # 즉시 컴파일
-        "memory_optimization_level": 2,  # 메모리 최적화 수준 (0-2)
-        "allow_xla_auto_fusion": True  # XLA 자동 퓨전 허용
     }
     
     # 함수 컴파일
