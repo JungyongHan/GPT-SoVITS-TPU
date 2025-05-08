@@ -1,9 +1,5 @@
 import torch
-import torch.utils.data
 from librosa.filters import mel as librosa_mel_fn
-import torch_xla.core.xla_model as xm
-import torch_xla
-import functools
 
 
 MAX_WAV_VALUE = 32768.0
@@ -111,13 +107,13 @@ try:
     }
     
     # 함수 컴파일
-    compiled_spec_to_mel = torch_xla.compile(
+    compiled_spec_to_mel = torch.compile(
         spec_to_mel_torch_tpu,
         **compile_options,
         name="spec_to_mel"
     )
     
-    compiled_mel_spectrogram = torch_xla.compile(
+    compiled_mel_spectrogram = torch.compile(
         mel_spectrogram_torch_tpu,
         **compile_options,
         name="mel_spectrogram"
@@ -167,8 +163,8 @@ try:
 
 except Exception as e:
     # 컴파일에 실패한 경우 원래 함수 사용
-    xm.master_print(f"멜 처리 함수 컴파일 실패: {e}")
-    xm.master_print("기본 함수를 사용합니다.")
+    print(f"멜 처리 함수 컴파일 실패: {e}")
+    print("기본 함수를 사용합니다.")
     
     # 기본 함수 정의
     def spec_to_mel_torch(spec, n_fft, num_mels, sampling_rate, fmin, fmax):
