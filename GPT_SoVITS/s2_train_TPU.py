@@ -302,8 +302,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
     net_g.train()
     net_d.train()
-    compiled_net_g = torch_xla.compile(net_g, full_graph = True)
-    compiled_net_d = torch_xla.compile(net_d, full_graph = True)
 
     for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
         xm.add_step_closure( _debug_print, args=(device, f"move_device") )
@@ -324,9 +322,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 z_mask,
                 (z, z_p, m_p, logs_p, m_q, logs_q),
                 stats_ssl,
-            ) = compiled_net_g(ssl, spec, spec_lengths, text, text_lengths)
+            ) = net_g(ssl, spec, spec_lengths, text, text_lengths)
             xm.add_step_closure( _debug_print, args=(device, f"forward done") )
-            xm.mark_step()
             mel = spec_to_mel_torch(
                 spec,
                 hps.data.filter_length,
@@ -352,8 +349,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
 
             # Discriminator
-            y_d_hat_r, y_d_hat_g, _, _ = compiled_net_d(y, y_hat.detach())
-            xm.mark_step()
+            y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
             xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
             with autocast(device=device, enabled=False):
             
@@ -376,8 +372,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         xm.add_step_closure( _debug_print, args=(device, f"backward done") )
         with autocast(device=device, enabled=hps.train.fp16_run):
             # Generator
-            y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = compiled_net_d(y, y_hat)
-            xm.mark_step()
+            y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
             with autocast(device=device, enabled=False):
                 loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
                 loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
