@@ -327,11 +327,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             xm.add_step_closure( _debug_print, args=(device, f"forward") )
             # Move ssl to device just before use inside autocast
             ssl = ssl.to(device)
-            ssl, spec, spec_lengths, y, y_lengths, text, text_lengths = map(
-                lambda x: keep_dtype(x, spec.dtype),
-                (ssl, spec, spec_lengths, y, y_lengths, text, text_lengths),
-            )
-
+            assert not torch.is_complex(ssl), f"ssl is complex! dtype: {ssl.dtype} : info {ssl}"
             (
                 y_hat,
                 kl_ssl,
@@ -341,6 +337,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 (z, z_p, m_p, logs_p, m_q, logs_q),
                 stats_ssl,
             ) = net_g(ssl, spec, spec_lengths, text, text_lengths)
+            assert not torch.is_complex(y_hat), f"y_hat is complex! dtype: {y_hat.dtype} : info {y_hat}"
             xm.add_step_closure( _debug_print, args=(device, f"forward done") )
             mel = spec_to_mel_torch(
                 spec,
@@ -350,9 +347,11 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 hps.data.mel_fmin,
                 hps.data.mel_fmax,
             )
+            assert not torch.is_complex(mel), f"mel is complex! dtype: {mel.dtype} : info {mel}"
             xm.add_step_closure( _debug_print, args=(device, f"mel done") )
 
             y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
+            assert not torch.is_complex(y_mel), f"y_mel is complex! dtype: {y_mel.dtype} : info {y_mel}"
             # 항상 실수 텐서로 변환하여 일관성 유지
             # y_mel = y_mel.to(torch.float32)
             
