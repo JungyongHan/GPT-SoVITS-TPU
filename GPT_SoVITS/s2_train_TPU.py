@@ -327,6 +327,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             xm.add_step_closure( _debug_print, args=(device, f"forward") )
             # Move ssl to device just before use inside autocast
             ssl = ssl.to(device)
+            xm.mark_step()
             assert not torch.is_complex(ssl), f"ssl is complex! dtype: {ssl.dtype} : info {ssl}"
             (
                 y_hat,
@@ -341,6 +342,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             print(f"y_hat dtype: {y_hat.dtype}, y_lengths: {y_lengths}")
             assert not torch.is_complex(y_hat), f"y_hat is complex! dtype: {y_hat.dtype} : info {y_hat}"
             xm.add_step_closure( _debug_print, args=(device, f"forward done") )
+            xm.mark_step()
             mel = spec_to_mel_torch(
                 spec,
                 hps.data.filter_length,
@@ -351,12 +353,12 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             )
             assert not torch.is_complex(mel), f"mel is complex! dtype: {mel.dtype} : info {mel}"
             xm.add_step_closure( _debug_print, args=(device, f"mel done") )
-
+            xm.mark_step()
             y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
             assert not torch.is_complex(y_mel), f"y_mel is complex! dtype: {y_mel.dtype} : info {y_mel}"
             # 항상 실수 텐서로 변환하여 일관성 유지
             # y_mel = y_mel.to(torch.float32)
-            
+            xm.mark_step()
             # Ensure we're working with real tensors before mel spectrogram calculation
 
             y_hat_mel = mel_spectrogram_torch(
@@ -372,13 +374,14 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             assert not torch.is_complex(y_hat_mel), f"y_hat_mel is complex! dtype: {y_hat_mel.dtype} : info {y_hat_mel}"
             # 항상 실수 텐서로 변환
             # y_hat_mel = y_hat_mel.to(torch.float32)
-            
+            xm.mark_step()
             xm.add_step_closure( _debug_print, args=(device, f"y_mel done") )
             y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
             assert not torch.is_complex(y), f"y is complex! dtype: {y.dtype} : info {y}"
             y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
             
             xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
+            xm.mark_step()
             with autocast(device=device, enabled=False):
                 loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
                     y_d_hat_r,
@@ -388,7 +391,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 loss_disc_all = loss_disc
                 loss_disc_all = loss_disc_all.float() # Convert to float32
                 xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
-
+        xm.mark_step()
         xm.add_step_closure( _debug_print, args=(device, f"backward") )
         optim_d.zero_grad()
         scaler.scale(loss_disc_all).backward()
