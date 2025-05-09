@@ -428,9 +428,9 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 
                 loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
 
-                # feature loss 계산 전 텐서 변환
-                fmap_r = [f.to(torch.float32) for f in fmap_r]
-                fmap_g = [f.to(torch.float32) for f in fmap_g]
+                # feature loss 계산 전 텐서 변환 - 중첩 리스트 구조 처리
+                fmap_r = [[f.to(torch.float32) for f in dr] for dr in fmap_r]
+                fmap_g = [[f.to(torch.float32) for f in dg] for dg in fmap_g]
                 loss_fm = feature_loss(fmap_r, fmap_g)
                 
                 # generator loss 계산 전 텐서 변환
