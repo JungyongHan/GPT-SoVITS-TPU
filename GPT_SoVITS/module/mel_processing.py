@@ -77,7 +77,10 @@ def spectrogram_torch(y, n_fft, sampling_rate, hop_size, win_size, center=False)
     
     # Final check to ensure we have real tensors
     if torch.is_complex(spec):
-        spec = torch.abs(spec)
+        # Avoid using torch.abs() directly on complex tensors for TPU compatibility
+        spec_real = torch.real(spec)
+        spec_imag = torch.imag(spec)
+        spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
         
     return spec
 
@@ -145,7 +148,10 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
 
     # Ensure spec is real before matrix multiplication
     if torch.is_complex(spec):
-        spec = torch.abs(spec)
+        # Avoid using torch.abs() directly on complex tensors for TPU compatibility
+        spec_real = torch.real(spec)
+        spec_imag = torch.imag(spec)
+        spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
         
     spec = torch.matmul(mel_basis[fmax_dtype_device], spec)
     spec = spectral_normalize_torch(spec)
