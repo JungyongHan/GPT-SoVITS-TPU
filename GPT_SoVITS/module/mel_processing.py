@@ -52,28 +52,12 @@ def spectrogram_torch(y, n_fft, sampling_rate, hop_size, win_size, center=False)
     y = torch.nn.functional.pad(y.unsqueeze(1), (int((n_fft-hop_size)/2), int((n_fft-hop_size)/2)), mode='reflect')
     y = y.squeeze(1)
     
-    # TPU compatibility: ensure we always get real tensors
-    try:
-        # Try using the non-complex version first (PyTorch 1.7+)
-        spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[key],
-                          center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
-        
-        # Manually compute magnitude from real and imaginary parts
-        spec_real, spec_imag = spec[..., 0], spec[..., 1]
-        spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
-    except Exception as e:
-        # Fallback for older PyTorch versions or if the above fails
-        spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[key],
-                          center=center, pad_mode='reflect', normalized=False, onesided=True)
-        
-        # Handle complex output if returned
-        if torch.is_complex(spec):
-            spec = torch.abs(spec)
-        else:
-            # Handle older PyTorch versions that return real/imag pairs
-            if spec.dim() == 4 and spec.size(-1) == 2:
-                spec_real, spec_imag = spec[..., 0], spec[..., 1]
-                spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
+    spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[key],
+                        center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
+    
+    # Manually compute magnitude from real and imaginary parts
+    spec_real, spec_imag = spec[..., 0], spec[..., 1]
+    spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
     
     # Final check to ensure we have real tensors
     if torch.is_complex(spec):
@@ -109,6 +93,7 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
         print('max value is ', torch.max(y))
 
     global mel_basis, hann_window
+    print("y_hat_real dtype:", y.dtype)
     dtype_device = str(y.dtype) + '_' + str(y.device)
     # fmax_dtype_device = str(fmax) + '_' + dtype_device
     fmax_dtype_device = "%s-%s-%s-%s-%s-%s-%s-%s"%(dtype_device,n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax)
@@ -123,28 +108,14 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
     y = torch.nn.functional.pad(y.unsqueeze(1), (int((n_fft-hop_size)/2), int((n_fft-hop_size)/2)), mode='reflect')
     y = y.squeeze(1)
 
-    # Always use return_complex=False for TPU compatibility
-    try:
-        # Try using the non-complex version first (PyTorch 1.7+)
-        spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
-                          center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
-        
-        # Manually compute magnitude from real and imaginary parts
-        spec_real, spec_imag = spec[..., 0], spec[..., 1]
-        spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
-    except Exception as e:
-        # Fallback for older PyTorch versions or if the above fails
-        spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
-                          center=center, pad_mode='reflect', normalized=False, onesided=True)
-        
-        # Handle complex output if returned
-        if torch.is_complex(spec):
-            spec = torch.abs(spec)
-        else:
-            # Handle older PyTorch versions that return real/imag pairs
-            if spec.dim() == 4 and spec.size(-1) == 2:
-                spec_real, spec_imag = spec[..., 0], spec[..., 1]
-                spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
+    # Try using the non-complex version first (PyTorch 1.7+)
+    spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
+                        center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
+    
+    # Manually compute magnitude from real and imaginary parts
+    spec_real, spec_imag = spec[..., 0], spec[..., 1]
+    spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
+    assert not torch.is_complex(spec), f"spec is complex! dtype: {spec.dtype}"
 
     # Ensure spec is real before matrix multiplication
     if torch.is_complex(spec):

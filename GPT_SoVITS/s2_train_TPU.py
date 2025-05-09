@@ -351,9 +351,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 hps.data.mel_fmax,
             )
             
-            # Double-check for any remaining complex values
-            if torch.is_complex(y_hat_mel):
-                y_hat_mel = torch.abs(y_hat_mel)
             xm.add_step_closure( _debug_print, args=(device, f"y_mel done") )
             y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
 
