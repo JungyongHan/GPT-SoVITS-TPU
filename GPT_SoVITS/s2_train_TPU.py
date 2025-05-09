@@ -356,6 +356,9 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
             # Discriminator
             y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
+            print("y_d_hat_r dtype:", y_d_hat_r.dtype)
+            print("y_d_hat_g dtype:", y_d_hat_g.dtype)
+
             xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
             with autocast(device=device, enabled=False):
             
@@ -363,6 +366,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     y_d_hat_r,
                     y_d_hat_g,
                 )
+                print("loss_disc dtype:", loss_disc.dtype)
                 loss_disc_all = loss_disc
                 xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
                 xm.mark_step()

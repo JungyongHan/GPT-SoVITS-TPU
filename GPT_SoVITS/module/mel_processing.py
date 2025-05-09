@@ -93,7 +93,6 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
         print('max value is ', torch.max(y))
 
     global mel_basis, hann_window
-    print("y dtype:", y.dtype)
     dtype_device = str(y.dtype) + '_' + str(y.device)
     # fmax_dtype_device = str(fmax) + '_' + dtype_device
     fmax_dtype_device = "%s-%s-%s-%s-%s-%s-%s-%s"%(dtype_device,n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax)
@@ -112,7 +111,6 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
     spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
                       center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
     spec = spec.to(torch.float32) # XLA에게 타입 힌트를 주기 위해 float32로 변환
-    print("spec dtype:", spec.dtype)
     # Manually compute magnitude from real and imaginary parts
 
     # Ensure spec is real before matrix multiplication
