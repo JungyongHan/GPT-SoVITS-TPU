@@ -337,6 +337,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 (z, z_p, m_p, logs_p, m_q, logs_q),
                 stats_ssl,
             ) = net_g(ssl, spec, spec_lengths, text, text_lengths)
+            print(f"ssl dtype: {ssl.dtype}, spec dtype: {spec.dtype}, spec_lengths: {spec_lengths}, text dtype: {text.dtype}, text_lengths: {text_lengths}")
+            print(f"y_hat dtype: {y_hat.dtype}, y_lengths: {y_lengths}")
             assert not torch.is_complex(y_hat), f"y_hat is complex! dtype: {y_hat.dtype} : info {y_hat}"
             xm.add_step_closure( _debug_print, args=(device, f"forward done") )
             mel = spec_to_mel_torch(
@@ -356,14 +358,9 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             # y_mel = y_mel.to(torch.float32)
             
             # Ensure we're working with real tensors before mel spectrogram calculation
-            y_hat_real = y_hat.squeeze(1)
-            if torch.is_complex(y_hat_real):
-                y_hat_real = torch.abs(y_hat_real)
-            # 항상 실수 텐서로 변환
-            # y_hat_real = y_hat_real.to(torch.float32)
 
             y_hat_mel = mel_spectrogram_torch(
-                y_hat_real,
+                y_hat.squeeze(1),
                 hps.data.filter_length,
                 hps.data.n_mel_channels,
                 hps.data.sampling_rate,
@@ -372,25 +369,14 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 hps.data.mel_fmin,
                 hps.data.mel_fmax,
             )
+            assert not torch.is_complex(y_hat_mel), f"y_hat_mel is complex! dtype: {y_hat_mel.dtype} : info {y_hat_mel}"
             # 항상 실수 텐서로 변환
             # y_hat_mel = y_hat_mel.to(torch.float32)
             
             xm.add_step_closure( _debug_print, args=(device, f"y_mel done") )
             y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
-
-            # Discriminator
-            # 입력 텐서가 복소수인지 확인하고 실수로 변환
-            if torch.is_complex(y):
-                y = torch.abs(y)
-            if torch.is_complex(y_hat):
-                y_hat_detach = torch.abs(y_hat.detach())
-            else:
-                y_hat_detach = y_hat.detach()
-                
-            y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat_detach)
-            # 모든 텐서를 float32로 변환하여 TPU 호환성 보장
-            # y_d_hat_r = [r.to(torch.float32) for r in y_d_hat_r]
-            # y_d_hat_g = [g.to(torch.float32) for g in y_d_hat_g]
+            assert not torch.is_complex(y), f"y is complex! dtype: {y.dtype} : info {y}"
+            y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
             
             xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
             with autocast(device=device, enabled=False):
@@ -398,16 +384,13 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     y_d_hat_r,
                     y_d_hat_g,
                 )
-                # 손실이 복소수가 아닌지 확인
-                if torch.is_complex(loss_disc):
-                    loss_disc = torch.abs(loss_disc)
+                assert not torch.is_complex(loss_disc), f"loss_disc is complex! dtype: {loss_disc.dtype} : info {loss_disc}"
                 loss_disc_all = loss_disc
+                loss_disc_all = loss_disc_all.float() # Convert to float32
                 xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
-        
+
         xm.add_step_closure( _debug_print, args=(device, f"backward") )
         optim_d.zero_grad()
-        # 손실이 실수형인지 최종 확인
-        loss_disc_all = loss_disc_all.to(torch.float32)
         scaler.scale(loss_disc_all).backward()
         gradients = xm._fetch_gradients(optim_d)
         xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)

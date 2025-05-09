@@ -19,6 +19,11 @@ def discriminator_loss(disc_real_outputs, disc_generated_outputs):
     r_losses = []
     g_losses = []
     for dr, dg in zip(disc_real_outputs, disc_generated_outputs):
+        # 복소수 텐서 확인 및 변환
+        if torch.is_complex(dr):
+            dr = torch.abs(dr)
+        if torch.is_complex(dg):
+            dg = torch.abs(dg)
         dr = dr.float()
         dg = dg.float()
         r_loss = torch.mean((1 - dr) ** 2)
@@ -26,7 +31,6 @@ def discriminator_loss(disc_real_outputs, disc_generated_outputs):
         loss += r_loss + g_loss
         r_losses.append(r_loss.item())
         g_losses.append(g_loss.item())
-
     return loss, r_losses, g_losses
 
 
