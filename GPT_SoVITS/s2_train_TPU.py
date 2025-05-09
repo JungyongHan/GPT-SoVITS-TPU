@@ -8,7 +8,7 @@ import utils
 hps = utils.get_hparams(stage=2)
 os.environ["CUDA_VISIBLE_DEVICES"] = hps.train.gpu_numbers.replace("-", ",")
 os.environ["PJRT_DEVICE"] = "TPU"
-os.environ["XLA_USE_BF16"] = "1" 
+os.environ["XLA_USE_BF16"] = "0" 
 os.environ["PT_XLA_DEBUG_LEVEL"] = "0"
 
 # TPU 지원 추가
@@ -310,7 +310,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         text, text_lengths = text.to(device), text_lengths.to(device)
         ssl.requires_grad = False
         xm.mark_step()
-        with autocast(device=device, enabled=hps.train.fp16_run):
+        with autocast(device=device, enabled=hps.train.fp16_run, dtype=torch.bfloat16):
             xm.add_step_closure( _debug_print, args=(device, f"forward") )
             # Move ssl to device just before use inside autocast
             ssl = ssl.to(device)
@@ -370,7 +370,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         xm.mark_step()
 
         xm.add_step_closure( _debug_print, args=(device, f"backward done") )
-        with autocast(device=device, enabled=hps.train.fp16_run):
+        with autocast(device=device, enabled=hps.train.fp16_run, dtype=torch.bfloat16):
             # Generator
             y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
             with autocast(device=device, enabled=False):

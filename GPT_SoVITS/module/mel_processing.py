@@ -103,8 +103,9 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
     spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
                       center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
 
-    spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-8)
-
+    spec_real, spec_imag = spec[..., 0], spec[..., 1]
+    spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-8)
+    
     spec = torch.matmul(mel_basis[fmax_dtype_device], spec)
     spec = spectral_normalize_torch(spec)
 
