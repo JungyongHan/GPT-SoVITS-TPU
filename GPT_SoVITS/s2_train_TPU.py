@@ -327,6 +327,11 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             xm.add_step_closure( _debug_print, args=(device, f"forward") )
             # Move ssl to device just before use inside autocast
             ssl = ssl.to(device)
+            ssl, spec, spec_lengths, y, y_lengths, text, text_lengths = map(
+                lambda x: keep_dtype(x, spec.dtype),
+                (ssl, spec, spec_lengths, y, y_lengths, text, text_lengths),
+            )
+            
             (
                 y_hat,
                 kl_ssl,
