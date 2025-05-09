@@ -365,6 +365,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 )
                 loss_disc_all = loss_disc
                 xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
+                xm.mark_step()
         
         xm.add_step_closure( _debug_print, args=(device, f"backward") )
         optim_d.zero_grad()
