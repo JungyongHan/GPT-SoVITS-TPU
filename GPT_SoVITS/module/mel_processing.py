@@ -45,22 +45,40 @@ def spectrogram_torch(y, n_fft, sampling_rate, hop_size, win_size, center=False)
 
     global hann_window
     dtype_device = str(y.dtype) + '_' + str(y.device)
-    # wnsize_dtype_device = str(win_size) + '_' + dtype_device
     key = "%s-%s-%s-%s-%s" %(dtype_device,n_fft, sampling_rate, hop_size, win_size)
-    # if wnsize_dtype_device not in hann_window:
     if key not in hann_window:
-        # hann_window[wnsize_dtype_device] = torch.hann_window(win_size).to(dtype=y.dtype, device=y.device)
         hann_window[key] = torch.hann_window(win_size).to(dtype=y.dtype, device=y.device)
 
     y = torch.nn.functional.pad(y.unsqueeze(1), (int((n_fft-hop_size)/2), int((n_fft-hop_size)/2)), mode='reflect')
     y = y.squeeze(1)
-    # spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
-    spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[key],
-                      center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
-
-    # 실수부와 허수부에서 직접 크기 계산 (TPU 호환성 개선)
-    spec_real, spec_imag = spec[..., 0], spec[..., 1]
-    spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
+    
+    # TPU compatibility: ensure we always get real tensors
+    try:
+        # Try using the non-complex version first (PyTorch 1.7+)
+        spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[key],
+                          center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
+        
+        # Manually compute magnitude from real and imaginary parts
+        spec_real, spec_imag = spec[..., 0], spec[..., 1]
+        spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
+    except Exception as e:
+        # Fallback for older PyTorch versions or if the above fails
+        spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[key],
+                          center=center, pad_mode='reflect', normalized=False, onesided=True)
+        
+        # Handle complex output if returned
+        if torch.is_complex(spec):
+            spec = torch.abs(spec)
+        else:
+            # Handle older PyTorch versions that return real/imag pairs
+            if spec.dim() == 4 and spec.size(-1) == 2:
+                spec_real, spec_imag = spec[..., 0], spec[..., 1]
+                spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
+    
+    # Final check to ensure we have real tensors
+    if torch.is_complex(spec):
+        spec = torch.abs(spec)
+        
     return spec
 
 
@@ -102,15 +120,33 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
     y = torch.nn.functional.pad(y.unsqueeze(1), (int((n_fft-hop_size)/2), int((n_fft-hop_size)/2)), mode='reflect')
     y = y.squeeze(1)
 
-    # 명시적으로 return_complex=False 설정하여 복소수 연산 방지
-    spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
-                      center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
+    # Always use return_complex=False for TPU compatibility
+    try:
+        # Try using the non-complex version first (PyTorch 1.7+)
+        spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
+                          center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
+        
+        # Manually compute magnitude from real and imaginary parts
+        spec_real, spec_imag = spec[..., 0], spec[..., 1]
+        spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
+    except Exception as e:
+        # Fallback for older PyTorch versions or if the above fails
+        spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
+                          center=center, pad_mode='reflect', normalized=False, onesided=True)
+        
+        # Handle complex output if returned
+        if torch.is_complex(spec):
+            spec = torch.abs(spec)
+        else:
+            # Handle older PyTorch versions that return real/imag pairs
+            if spec.dim() == 4 and spec.size(-1) == 2:
+                spec_real, spec_imag = spec[..., 0], spec[..., 1]
+                spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
 
-    # 실수부와 허수부에서 직접 크기 계산
-    # TPU에서 문제가 되는 복소수 연산 사용 방지
-    spec_real, spec_imag = spec[..., 0], spec[..., 1]
-    spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
-
+    # Ensure spec is real before matrix multiplication
+    if torch.is_complex(spec):
+        spec = torch.abs(spec)
+        
     spec = torch.matmul(mel_basis[fmax_dtype_device], spec)
     spec = spectral_normalize_torch(spec)
 

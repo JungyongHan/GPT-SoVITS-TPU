@@ -335,8 +335,13 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             xm.add_step_closure( _debug_print, args=(device, f"mel done") )
 
             y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
+            # Ensure we're working with real tensors before mel spectrogram calculation
+            y_hat_real = y_hat.squeeze(1)
+            if torch.is_complex(y_hat_real):
+                y_hat_real = torch.abs(y_hat_real)
+                
             y_hat_mel = mel_spectrogram_torch(
-                y_hat.squeeze(1),
+                y_hat_real,
                 hps.data.filter_length,
                 hps.data.n_mel_channels,
                 hps.data.sampling_rate,
@@ -345,7 +350,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 hps.data.mel_fmin,
                 hps.data.mel_fmax,
             )
-            # 혹시 남아있는 복소수 값 처리를 위한 안전장치
+            
+            # Double-check for any remaining complex values
             if torch.is_complex(y_hat_mel):
                 y_hat_mel = torch.abs(y_hat_mel)
             xm.add_step_closure( _debug_print, args=(device, f"y_mel done") )
@@ -377,12 +383,18 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             # Generator
             y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
             with autocast(device=device, enabled=False):
-                # 복소수 값 처리를 위한 안전장치 추가
-                if torch.is_complex(y_mel):
-                    y_mel = torch.abs(y_mel)
-                if torch.is_complex(y_hat_mel):
-                    y_hat_mel = torch.abs(y_hat_mel)
-                loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
+                # Ensure both mel spectrograms are real tensors before loss calculation
+                # Convert complex tensors to real tensors if needed
+                y_mel_real = y_mel
+                if torch.is_complex(y_mel_real):
+                    y_mel_real = torch.abs(y_mel_real)
+                    
+                y_hat_mel_real = y_hat_mel
+                if torch.is_complex(y_hat_mel_real):
+                    y_hat_mel_real = torch.abs(y_hat_mel_real)
+                    
+                # Now compute loss with real-valued tensors
+                loss_mel = F.l1_loss(y_mel_real, y_hat_mel_real) * hps.train.c_mel
                 loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
 
                 loss_fm = feature_loss(fmap_r, fmap_g)
