@@ -107,16 +107,12 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
 
     y = torch.nn.functional.pad(y.unsqueeze(1), (int((n_fft-hop_size)/2), int((n_fft-hop_size)/2)), mode='reflect')
     y = y.squeeze(1)
-    print("after librosa y dtype:", y.dtype)
 
     # Try using the non-complex version first (PyTorch 1.7+)
     spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
-                        center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
+                        center=center, pad_mode='reflect', normalized=False, onesided=True)
     print("spec dtype:", spec.dtype)
     # Manually compute magnitude from real and imaginary parts
-    spec_real, spec_imag = spec[..., 0], spec[..., 1]
-    spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
-    assert not torch.is_complex(spec), f"spec is complex! dtype: {spec.dtype} : info {spec}"
 
     # Ensure spec is real before matrix multiplication
     if torch.is_complex(spec):
@@ -124,7 +120,9 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
         spec_real = torch.real(spec)
         spec_imag = torch.imag(spec)
         spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
-        
+    else:
+        spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-8)
+    assert not torch.is_complex(spec), f"spec is complex! dtype: {spec.dtype} : info {spec}"        
     spec = torch.matmul(mel_basis[fmax_dtype_device], spec)
     spec = spectral_normalize_torch(spec)
 
