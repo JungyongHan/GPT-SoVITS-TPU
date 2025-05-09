@@ -356,8 +356,11 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
             # Discriminator
             y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
-            print("y_d_hat_r dtype:", y_d_hat_r.dtype)
-            print("y_d_hat_g dtype:", y_d_hat_g.dtype)
+            # y_d_hat_r is list , y_d_hat_g is list so find dtype
+            print("y_d_hat_r dtype:", y_d_hat_r[0].dtype)
+            print("y_d_hat_g dtype:", y_d_hat_g[0].dtype)
+            print("y_d_hat_r len:", len(y_d_hat_r))
+            print("y_d_hat_g len:", len(y_d_hat_g))
 
             xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
             with autocast(device=device, enabled=False):
