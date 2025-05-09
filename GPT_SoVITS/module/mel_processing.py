@@ -142,8 +142,13 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
     
     # 항상 float32로 변환하여 XLA 호환성 보장
     spec = spec.to(torch.float32)
-    spec = torch.matmul(mel_basis[fmax_dtype_device], spec)
+    # mel_basis도 float32로 변환하여 일관성 유지
+    mel_basis_float32 = mel_basis[fmax_dtype_device].to(torch.float32)
+    spec = torch.matmul(mel_basis_float32, spec)
     spec = spectral_normalize_torch(spec)
+    # 최종 결과를 명시적으로 float32로 변환
     spec = spec.to(torch.float32) # XLA에게 타입 힌트를 주기 위해 float32로 변환
-    assert not torch.is_complex(spec), f"spec is complex! dtype: {spec.dtype} : info {spec}"        
+    assert not torch.is_complex(spec), f"spec is complex! dtype: {spec.dtype} : info {spec}"
+    # 추가 검증: 텐서가 float32 타입인지 확인
+    assert spec.dtype == torch.float32, f"spec is not float32! dtype: {spec.dtype}"
     return spec

@@ -334,10 +334,15 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             xm.add_step_closure( _debug_print, args=(device, f"mel done") )
 
             y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
+            # 항상 실수 텐서로 변환하여 일관성 유지
+            y_mel = y_mel.to(torch.float32)
+            
             # Ensure we're working with real tensors before mel spectrogram calculation
             y_hat_real = y_hat.squeeze(1)
             if torch.is_complex(y_hat_real):
                 y_hat_real = torch.abs(y_hat_real)
+            # 항상 실수 텐서로 변환
+            y_hat_real = y_hat_real.to(torch.float32)
 
             y_hat_mel = mel_spectrogram_torch(
                 y_hat_real,
@@ -349,6 +354,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 hps.data.mel_fmin,
                 hps.data.mel_fmax,
             )
+            # 항상 실수 텐서로 변환
+            y_hat_mel = y_hat_mel.to(torch.float32)
             
             xm.add_step_closure( _debug_print, args=(device, f"y_mel done") )
             y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
@@ -395,23 +402,49 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             # Generator
             y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
             with autocast(device=device, enabled=False):
-                # Ensure both mel spectrograms are real tensors before loss calculation
-                # Convert complex tensors to real tensors if needed
+                # 모든 텐서를 명시적으로 float32로 변환하여 일관성 유지
+                # 복소수 텐서가 있으면 실수로 변환
                 y_mel_real = y_mel
                 if torch.is_complex(y_mel_real):
                     y_mel_real = torch.abs(y_mel_real)
+                # 항상 float32로 변환
+                y_mel_real = y_mel_real.to(torch.float32)
                     
                 y_hat_mel_real = y_hat_mel
                 if torch.is_complex(y_hat_mel_real):
                     y_hat_mel_real = torch.abs(y_hat_mel_real)
+                # 항상 float32로 변환
+                y_hat_mel_real = y_hat_mel_real.to(torch.float32)
                     
                 # Now compute loss with real-valued tensors
                 loss_mel = F.l1_loss(y_mel_real, y_hat_mel_real) * hps.train.c_mel
+                
+                # KL loss 계산 전 모든 텐서를 float32로 변환
+                z_p = z_p.to(torch.float32) if z_p is not None else None
+                logs_q = logs_q.to(torch.float32) if logs_q is not None else None
+                m_p = m_p.to(torch.float32) if m_p is not None else None
+                logs_p = logs_p.to(torch.float32) if logs_p is not None else None
+                z_mask = z_mask.to(torch.float32) if z_mask is not None else None
+                
                 loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
 
+                # feature loss 계산 전 텐서 변환
+                fmap_r = [f.to(torch.float32) for f in fmap_r]
+                fmap_g = [f.to(torch.float32) for f in fmap_g]
                 loss_fm = feature_loss(fmap_r, fmap_g)
+                
+                # generator loss 계산 전 텐서 변환
+                y_d_hat_g = [g.to(torch.float32) for g in y_d_hat_g]
                 loss_gen, losses_gen = generator_loss(y_d_hat_g)
+                
+                # kl_ssl을 float32로 변환
+                if torch.is_complex(kl_ssl):
+                    kl_ssl = torch.abs(kl_ssl)
+                kl_ssl = kl_ssl.to(torch.float32)
+                
                 loss_gen_all = loss_gen + loss_fm + loss_mel + kl_ssl * 1 + loss_kl
+                # 최종 손실이 float32인지 확인
+                loss_gen_all = loss_gen_all.to(torch.float32)
 
         xm.add_step_closure( _debug_print, args=(device, f"loss_gen done") )
         optim_g.zero_grad()
