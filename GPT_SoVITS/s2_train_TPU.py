@@ -291,28 +291,39 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     tracker = xm.RateTracker()
     device = xm.xla_device()
 
+    # 텐서의 데이터형태를 유지시키는 함수
+    def keep_dtype(tensor, dtype):
+        # tensor의 형태에 따라 재귀호출
+        if tensor is None:
+            return None
+        if isinstance(tensor, (list, tuple)):
+            return [keep_dtype(item, dtype) for item in tensor]
+        if isinstance(tensor, dict):
+            return {key: keep_dtype(value, dtype) for key, value in tensor.items()}
+        return tensor.to(dtype)
+
 
     xm.master_print(f"에포크 {epoch}: 학습 시작")
 
 
     with autocast(device=device, enabled=hps.train.fp16_run):
-        net_g, net_d = nets
-        optim_g, optim_d = optims
-        scheduler_g, scheduler_d = schedulers
+        net_g, net_d = nets[0].to(device), nets[1].to(device)
+        optim_g, optim_d = optims[0].to(device), optims[1].to(device)
+        scheduler_g, scheduler_d = schedulers[0].to(device), schedulers[1].to(device)
         train_loader, eval_loader = loaders
         if writers is not None:
             writer, writer_eval = writers
-            
+
         net_g.train()
         net_d.train()
 
     for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
         xm.add_step_closure( _debug_print, args=(device, f"move_device") )
-        spec, spec_lengths = spec.to(device), spec_lengths.to(device)
-        y, y_lengths = y.to(device), y_lengths.to(device)
-        text, text_lengths = text.to(device), text_lengths.to(device)
-        ssl.requires_grad = False
         with autocast(device=device, enabled=hps.train.fp16_run):
+            spec, spec_lengths = spec.to(device), spec_lengths.to(device)
+            y, y_lengths = y.to(device), y_lengths.to(device)
+            text, text_lengths = text.to(device), text_lengths.to(device)
+            ssl.requires_grad = False
             xm.add_step_closure( _debug_print, args=(device, f"forward") )
             # Move ssl to device just before use inside autocast
             ssl = ssl.to(device)
