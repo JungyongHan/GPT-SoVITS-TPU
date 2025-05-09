@@ -308,8 +308,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
     with autocast(device=device, enabled=hps.train.fp16_run):
         net_g, net_d = nets[0].to(device), nets[1].to(device)
-        optim_g, optim_d = optims[0].to(device), optims[1].to(device)
-        scheduler_g, scheduler_d = schedulers[0].to(device), schedulers[1].to(device)
+        optim_g, optim_d = optims
+        scheduler_g, scheduler_d = schedulers
         train_loader, eval_loader = loaders
         if writers is not None:
             writer, writer_eval = writers
@@ -331,7 +331,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 lambda x: keep_dtype(x, spec.dtype),
                 (ssl, spec, spec_lengths, y, y_lengths, text, text_lengths),
             )
-            
+
             (
                 y_hat,
                 kl_ssl,
