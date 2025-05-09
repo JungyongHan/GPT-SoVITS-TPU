@@ -345,6 +345,9 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 hps.data.mel_fmin,
                 hps.data.mel_fmax,
             )
+            # 혹시 남아있는 복소수 값 처리를 위한 안전장치
+            if torch.is_complex(y_hat_mel):
+                y_hat_mel = torch.abs(y_hat_mel)
             xm.add_step_closure( _debug_print, args=(device, f"y_mel done") )
             y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
 
@@ -374,6 +377,11 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             # Generator
             y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
             with autocast(device=device, enabled=False):
+                # 복소수 값 처리를 위한 안전장치 추가
+                if torch.is_complex(y_mel):
+                    y_mel = torch.abs(y_mel)
+                if torch.is_complex(y_hat_mel):
+                    y_hat_mel = torch.abs(y_hat_mel)
                 loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
                 loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
 
