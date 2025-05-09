@@ -309,8 +309,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         y, y_lengths = y.to(device), y_lengths.to(device)
         text, text_lengths = text.to(device), text_lengths.to(device)
         ssl.requires_grad = False
-        xm.mark_step()
-        with autocast(device=device, enabled=hps.train.fp16_run, dtype=torch.bfloat16):
+        with autocast(device=device, enabled=hps.train.fp16_run):
             xm.add_step_closure( _debug_print, args=(device, f"forward") )
             # Move ssl to device just before use inside autocast
             ssl = ssl.to(device)
@@ -339,8 +338,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             y_hat_real = y_hat.squeeze(1)
             if torch.is_complex(y_hat_real):
                 y_hat_real = torch.abs(y_hat_real)
-                
-            xm.mark_step()
+
             y_hat_mel = mel_spectrogram_torch(
                 y_hat_real,
                 hps.data.filter_length,
@@ -361,14 +359,12 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             y_d_hat_g = [g.to(torch.float32) for g in y_d_hat_g]
             # y_d_hat_r is list , y_d_hat_g is list so find dtype
             xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
-            xm.mark_step()
             with autocast(device=device, enabled=False):
             
                 loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
                     y_d_hat_r,
                     y_d_hat_g,
                 )
-                loss_disc_all = loss_disc.to(torch.float32)
                 xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
         
         xm.add_step_closure( _debug_print, args=(device, f"backward") )
@@ -381,7 +377,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         xm.mark_step()
 
         xm.add_step_closure( _debug_print, args=(device, f"backward done") )
-        with autocast(device=device, enabled=hps.train.fp16_run, dtype=torch.bfloat16):
+        with autocast(device=device, enabled=hps.train.fp16_run):
             # Generator
             y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
             with autocast(device=device, enabled=False):
