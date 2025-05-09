@@ -354,22 +354,35 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
 
             # Discriminator
-            y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
+            # 입력 텐서가 복소수인지 확인하고 실수로 변환
+            if torch.is_complex(y):
+                y = torch.abs(y)
+            if torch.is_complex(y_hat):
+                y_hat_detach = torch.abs(y_hat.detach())
+            else:
+                y_hat_detach = y_hat.detach()
+                
+            y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat_detach)
+            # 모든 텐서를 float32로 변환하여 TPU 호환성 보장
             y_d_hat_r = [r.to(torch.float32) for r in y_d_hat_r]
             y_d_hat_g = [g.to(torch.float32) for g in y_d_hat_g]
-            # y_d_hat_r is list , y_d_hat_g is list so find dtype
+            
             xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
             with autocast(device=device, enabled=False):
-            
                 loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
                     y_d_hat_r,
                     y_d_hat_g,
                 )
+                # 손실이 복소수가 아닌지 확인
+                if torch.is_complex(loss_disc):
+                    loss_disc = torch.abs(loss_disc)
                 loss_disc_all = loss_disc
                 xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
         
         xm.add_step_closure( _debug_print, args=(device, f"backward") )
         optim_d.zero_grad()
+        # 손실이 실수형인지 최종 확인
+        loss_disc_all = loss_disc_all.to(torch.float32)
         scaler.scale(loss_disc_all).backward()
         gradients = xm._fetch_gradients(optim_d)
         xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
