@@ -288,20 +288,23 @@ def _train_update(device, epoch, step, total_step, loss, tracker, writer):
 
 def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loaders, logger, writers):
     global global_step
-    net_g, net_d = nets
-    optim_g, optim_d = optims
-    scheduler_g, scheduler_d = schedulers
-    train_loader, eval_loader = loaders
-    if writers is not None:
-        writer, writer_eval = writers
-
-    xm.master_print(f"에포크 {epoch}: 학습 시작")
-
     tracker = xm.RateTracker()
     device = xm.xla_device()
 
-    net_g.train()
-    net_d.train()
+
+    xm.master_print(f"에포크 {epoch}: 학습 시작")
+
+
+    with autocast(device=device, enabled=hps.train.fp16_run):
+        net_g, net_d = nets
+        optim_g, optim_d = optims
+        scheduler_g, scheduler_d = schedulers
+        train_loader, eval_loader = loaders
+        if writers is not None:
+            writer, writer_eval = writers
+            
+        net_g.train()
+        net_d.train()
 
     for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
         xm.add_step_closure( _debug_print, args=(device, f"move_device") )
@@ -335,14 +338,14 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
             y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
             # 항상 실수 텐서로 변환하여 일관성 유지
-            y_mel = y_mel.to(torch.float32)
+            # y_mel = y_mel.to(torch.float32)
             
             # Ensure we're working with real tensors before mel spectrogram calculation
             y_hat_real = y_hat.squeeze(1)
             if torch.is_complex(y_hat_real):
                 y_hat_real = torch.abs(y_hat_real)
             # 항상 실수 텐서로 변환
-            y_hat_real = y_hat_real.to(torch.float32)
+            # y_hat_real = y_hat_real.to(torch.float32)
 
             y_hat_mel = mel_spectrogram_torch(
                 y_hat_real,
@@ -355,7 +358,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 hps.data.mel_fmax,
             )
             # 항상 실수 텐서로 변환
-            y_hat_mel = y_hat_mel.to(torch.float32)
+            # y_hat_mel = y_hat_mel.to(torch.float32)
             
             xm.add_step_closure( _debug_print, args=(device, f"y_mel done") )
             y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
@@ -371,8 +374,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 
             y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat_detach)
             # 모든 텐서를 float32로 변환하여 TPU 호환성 보장
-            y_d_hat_r = [r.to(torch.float32) for r in y_d_hat_r]
-            y_d_hat_g = [g.to(torch.float32) for g in y_d_hat_g]
+            # y_d_hat_r = [r.to(torch.float32) for r in y_d_hat_r]
+            # y_d_hat_g = [g.to(torch.float32) for g in y_d_hat_g]
             
             xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
             with autocast(device=device, enabled=False):
