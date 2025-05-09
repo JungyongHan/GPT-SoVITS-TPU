@@ -340,6 +340,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             if torch.is_complex(y_hat_real):
                 y_hat_real = torch.abs(y_hat_real)
                 
+            xm.mark_step()
             y_hat_mel = mel_spectrogram_torch(
                 y_hat_real,
                 hps.data.filter_length,
@@ -356,23 +357,19 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
             # Discriminator
             y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
+            y_d_hat_r = [r.to(torch.float32) for r in y_d_hat_r]
+            y_d_hat_g = [g.to(torch.float32) for g in y_d_hat_g]
             # y_d_hat_r is list , y_d_hat_g is list so find dtype
-            print("y_d_hat_r dtype:", y_d_hat_r[0].dtype)
-            print("y_d_hat_g dtype:", y_d_hat_g[0].dtype)
-            print("y_d_hat_r len:", len(y_d_hat_r))
-            print("y_d_hat_g len:", len(y_d_hat_g))
-
             xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
+            xm.mark_step()
             with autocast(device=device, enabled=False):
             
                 loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
                     y_d_hat_r,
                     y_d_hat_g,
                 )
-                print("loss_disc dtype:", loss_disc.dtype)
-                loss_disc_all = loss_disc
+                loss_disc_all = loss_disc.to(torch.float32)
                 xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
-                xm.mark_step()
         
         xm.add_step_closure( _debug_print, args=(device, f"backward") )
         optim_d.zero_grad()
