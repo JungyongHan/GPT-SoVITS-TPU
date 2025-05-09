@@ -110,7 +110,8 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
 
     # Try using the non-complex version first (PyTorch 1.7+)
     spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
-                        center=center, pad_mode='reflect', normalized=False, onesided=True)
+                      center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
+    spec = spec.to(torch.float32) # XLA에게 타입 힌트를 주기 위해 float32로 변환
     print("spec dtype:", spec.dtype)
     # Manually compute magnitude from real and imaginary parts
 
@@ -122,8 +123,8 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
         spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
     else:
         spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-8)
-    assert not torch.is_complex(spec), f"spec is complex! dtype: {spec.dtype} : info {spec}"        
     spec = torch.matmul(mel_basis[fmax_dtype_device], spec)
     spec = spectral_normalize_torch(spec)
-
+    spec = spec.to(torch.float32) # XLA에게 타입 힌트를 주기 위해 float32로 변환
+    assert not torch.is_complex(spec), f"spec is complex! dtype: {spec.dtype} : info {spec}"        
     return spec
