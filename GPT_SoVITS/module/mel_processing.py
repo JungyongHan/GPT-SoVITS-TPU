@@ -119,26 +119,18 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
     y = y.squeeze(1)
 
     # TPU 호환성을 위해 return_complex=False로 설정하고 명시적으로 실수 텐서로 처리
-    try:
-        # PyTorch 1.7+ 방식으로 시도
-        spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
-                        center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
-        
-        # 명시적으로 실수/허수 부분 추출 (마지막 차원이 2인 실수 텐서)
-        if spec.dim() > 0 and spec.shape[-1] == 2:
-            spec_real, spec_imag = spec[..., 0], spec[..., 1]
-            spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
-        else:
-            # 이미 magnitude인 경우
-            spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-8)
-    except Exception as e:
-        print(f"STFT error: {e}, trying alternative method")
-        # 대체 방법: 명시적으로 실수/허수 부분 분리
-        spec_complex = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
-                        center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=True)
-        spec_real = torch.real(spec_complex)
-        spec_imag = torch.imag(spec_complex)
+    # PyTorch 1.7+ 방식으로 시도
+    spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
+                    center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
+    print(f"spec dtype: {spec.dtype}, device: {spec.device}")
+    # 명시적으로 실수/허수 부분 추출 (마지막 차원이 2인 실수 텐서)
+    if spec.dim() > 0 and spec.shape[-1] == 2:
+        spec_real, spec_imag = spec[..., 0], spec[..., 1]
         spec = torch.sqrt(spec_real.pow(2) + spec_imag.pow(2) + 1e-9)
+    else:
+        # 이미 magnitude인 경우
+        spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-8)
+
     
     # 항상 float32로 변환하여 XLA 호환성 보장
     spec = spec.to(torch.float32)
