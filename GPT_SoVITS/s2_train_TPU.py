@@ -291,7 +291,7 @@ def _get_device_spec(device):
 def _debug_print(device, message):
     print(f"[{_get_device_spec(device)}] {message}")    
 
-def _train_update(device, epoch, step, total_step, loss, tracker, writer):
+def _train_update(device, epoch, step, total_step, loss, tracker):
     rate = tracker.rate()
     global_rate = tracker.global_rate()
     print(
@@ -314,6 +314,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         train_loader, eval_loader = loaders
         if writers is not None:
             writer, writer_eval = writers
+        else:
+            writer, writer_eval = None, None
 
         net_g.train()
         net_d.train()
@@ -474,13 +476,13 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
         xm.add_step_closure(
             _train_update,
-            args=(device, epoch, batch_idx, len(train_loader), loss_gen_all, tracker, writer),
+            args=(device, epoch, batch_idx, len(train_loader), loss_gen_all, tracker),
         )
         scheduler_g.step()
         scheduler_d.step()
 
         xm.mark_step()
-        if rank == 0:
+        if rank == 0 and writer is not None:
             if global_step % hps.train.log_interval == 0:
                 lr = optim_g.param_groups[0]["lr"]
                 losses = [loss_disc, loss_gen, loss_fm, loss_mel, kl_ssl, loss_kl]
