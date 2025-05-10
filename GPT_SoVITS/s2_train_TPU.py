@@ -386,7 +386,9 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
             xm.mark_step()
             assert not torch.is_complex(y), f"y is complex! dtype: {y.dtype} : info {y}"
-            y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
+            y_hat_detach = y_hat.detach()
+            y_hat_detach = y_hat_detach.float()
+            y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat_detach)
             
             xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
             xm.mark_step()
