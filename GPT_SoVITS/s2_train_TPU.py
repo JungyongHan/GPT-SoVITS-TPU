@@ -181,6 +181,9 @@ def run(index, hps):
         eps=hps.train.eps,
     )
 
+    net_g = DDP(net_g, gradient_as_bucket_view=True).to(device)
+    net_d = DDP(net_d, gradient_as_bucket_view=True).to(device)
+
     try:  # 如果能加载自动resume
         _, _, _, epoch_str = utils.load_checkpoint(
             utils.latest_checkpoint_path("%s/logs_s2_%s" % (hps.data.exp_dir, hps.model.version), "D_*.pth"),

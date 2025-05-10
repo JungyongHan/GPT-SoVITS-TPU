@@ -120,7 +120,7 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
 
     # TPU 호환성을 위해 return_complex=False로 설정하고 명시적으로 실수 텐서로 처리
     spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
-                    center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
+                    center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False).to(torch.float32)
     print(f"spec dtype: {spec.dtype}, device: {spec.device}")
     # 명시적으로 실수/허수 부분 추출 (마지막 차원이 2인 실수 텐서)
     if spec.dim() > 0 and spec.shape[-1] == 2:
