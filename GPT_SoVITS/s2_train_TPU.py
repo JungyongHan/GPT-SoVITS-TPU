@@ -181,8 +181,8 @@ def run(index, hps):
         eps=hps.train.eps,
     )
 
-    net_g = DDP(net_g, broadcast_buffers=False, gradient_as_bucket_view=True).to(device)
-    net_d = DDP(net_d, broadcast_buffers=False, gradient_as_bucket_view=True).to(device)
+    # net_g = DDP(net_g, broadcast_buffers=False, gradient_as_bucket_view=True).to(device)
+    # net_d = DDP(net_d, broadcast_buffers=False, gradient_as_bucket_view=True).to(device)
 
     try:  # 如果能加载自动resume
         _, _, _, epoch_str = utils.load_checkpoint(
