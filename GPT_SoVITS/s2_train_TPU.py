@@ -208,16 +208,27 @@ def run(index, hps):
         try:
             if hps.train.pretrained_s2G != "" and hps.train.pretrained_s2G != None and os.path.exists(hps.train.pretrained_s2G):
                 print("load pretrained s2G", hps.train.pretrained_s2G)
-                net_g.load_state_dict(
-                    torch.load(hps.train.pretrained_s2G, map_location="cpu")["weight"],
-                    strict=False,
-                )
+                if hasattr(net_g, "module"):
+                    net_g.module.load_state_dict(
+                        torch.load(hps.train.pretrained_s2G, map_location="cpu")["weight"],
+                        strict=False,
+                    )
+                else:
+                    net_g.load_state_dict(
+                        torch.load(hps.train.pretrained_s2G, map_location="cpu")["weight"],
+                        strict=False,
+                    )
                 
             if hps.train.pretrained_s2D != "" and hps.train.pretrained_s2D != None and os.path.exists(hps.train.pretrained_s2D):
                 print("load pretrained s2D", hps.train.pretrained_s2D)
-                net_d.load_state_dict(
-                    torch.load(hps.train.pretrained_s2D, map_location="cpu")["weight"],
-                )
+                if hasattr(net_d, "module"):
+                    net_d.module.load_state_dict(
+                        torch.load(hps.train.pretrained_s2D, map_location="cpu")["weight"],
+                    )
+                else:
+                    net_d.load_state_dict(
+                        torch.load(hps.train.pretrained_s2D, map_location="cpu")["weight"],
+                    )
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -581,7 +592,10 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         _save_checkpoint()
         if rank == 0:
             if hps.train.if_save_every_weights == True:
-                ckpt = net_g.state_dict()
+                if hasattr(net_g, "module"):
+                    ckpt = net_g.module.state_dict()
+                else:
+                    ckpt = net_g.state_dict()
                 logger.info(
                     "saving ckpt %s_e%s:%s"
                     % (
