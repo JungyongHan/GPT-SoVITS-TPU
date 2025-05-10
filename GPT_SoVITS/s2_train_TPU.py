@@ -345,6 +345,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             assert not torch.is_complex(mel), f"mel is complex! dtype: {mel.dtype} : info {mel}"
             xm.add_step_closure( _debug_print, args=(device, f"mel done") )
             xm.mark_step()
+            mel = mel.float()
             y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
             assert not torch.is_complex(y_mel), f"y_mel is complex! dtype: {y_mel.dtype} : info {y_mel}"
             # 항상 실수 텐서로 변환하여 일관성 유지
@@ -365,9 +366,9 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             assert not torch.is_complex(y_hat_mel), f"y_hat_mel is complex! dtype: {y_hat_mel.dtype} : info {y_hat_mel}"
             # 항상 실수 텐서로 변환
             # y_hat_mel = y_hat_mel.to(torch.float32)
-            xm.mark_step()
             xm.add_step_closure( _debug_print, args=(device, f"y_mel done") )
             y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size)  # slice
+            xm.mark_step()
             assert not torch.is_complex(y), f"y is complex! dtype: {y.dtype} : info {y}"
             y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
             
