@@ -291,20 +291,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     tracker = xm.RateTracker()
     device = xm.xla_device()
 
-    # 텐서의 데이터형태를 유지시키는 함수
-    def keep_dtype(tensor, dtype):
-        # tensor의 형태에 따라 재귀호출
-        if tensor is None:
-            return None
-        if isinstance(tensor, (list, tuple)):
-            return [keep_dtype(item, dtype) for item in tensor]
-        if isinstance(tensor, dict):
-            return {key: keep_dtype(value, dtype) for key, value in tensor.items()}
-        return tensor.to(dtype)
-
-
     xm.master_print(f"에포크 {epoch}: 학습 시작")
-
 
     with autocast(device=device, enabled=hps.train.fp16_run):
         net_g, net_d = nets[0].to(device), nets[1].to(device)
@@ -327,6 +314,10 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             xm.add_step_closure( _debug_print, args=(device, f"forward") )
             # Move ssl to device just before use inside autocast
             ssl = ssl.to(device)
+            ssl = ssl.float()
+            spec = spec.float()
+            text = text.long()
+            y = y.float()
             xm.mark_step()
             assert not torch.is_complex(ssl), f"ssl is complex! dtype: {ssl.dtype} : info {ssl}"
             (
@@ -338,11 +329,11 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 (z, z_p, m_p, logs_p, m_q, logs_q),
                 stats_ssl,
             ) = net_g(ssl, spec, spec_lengths, text, text_lengths)
-            print(f"ssl dtype: {ssl.dtype}, spec dtype: {spec.dtype}, spec_lengths: {spec_lengths}, text dtype: {text.dtype}, text_lengths: {text_lengths}")
-            print(f"y_hat dtype: {y_hat.dtype}, y_lengths: {y_lengths}")
+            print(f"ssl dtype: {ssl.dtype}, spec dtype: {spec.dtype}, spec_lengths: {spec_lengths}, text dtype: {text.dtype}, text_lengths: {text_lengths}, y dtype: {y.dtype}, y_lengths: {y_lengths}")
             assert not torch.is_complex(y_hat), f"y_hat is complex! dtype: {y_hat.dtype} : info {y_hat}"
             xm.add_step_closure( _debug_print, args=(device, f"forward done") )
             xm.mark_step()
+            spec = spec.float()
             mel = spec_to_mel_torch(
                 spec,
                 hps.data.filter_length,
@@ -360,7 +351,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             # y_mel = y_mel.to(torch.float32)
             xm.mark_step()
             # Ensure we're working with real tensors before mel spectrogram calculation
-
+            y_hat = y_hat.float()
             y_hat_mel = mel_spectrogram_torch(
                 y_hat.squeeze(1),
                 hps.data.filter_length,
@@ -383,18 +374,19 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             xm.add_step_closure( _debug_print, args=(device, f"y_d_hat done") )
             xm.mark_step()
             with autocast(device=device, enabled=False):
+                
                 loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
                     y_d_hat_r,
                     y_d_hat_g,
                 )
+                loss_disc = loss_disc.float() # Convert to float32
                 assert not torch.is_complex(loss_disc), f"loss_disc is complex! dtype: {loss_disc.dtype} : info {loss_disc}"
-                loss_disc_all = loss_disc
-                loss_disc_all = loss_disc_all.float() # Convert to float32
+                # loss_disc_all = loss_disc
                 xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
         xm.mark_step()
         xm.add_step_closure( _debug_print, args=(device, f"backward") )
         optim_d.zero_grad()
-        scaler.scale(loss_disc_all).backward()
+        scaler.scale(loss_disc).backward()
         gradients = xm._fetch_gradients(optim_d)
         xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
         scaler.unscale_(optim_d)
