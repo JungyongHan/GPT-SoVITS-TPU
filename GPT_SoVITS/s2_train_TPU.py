@@ -343,7 +343,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 (z, z_p, m_p, logs_p, m_q, logs_q),
                 stats_ssl,
             ) = net_g(ssl, spec, spec_lengths, text, text_lengths)
-            print(f"ssl dtype: {ssl.dtype}, spec dtype: {spec.dtype}, spec_lengths: {spec_lengths}, text dtype: {text.dtype}, text_lengths: {text_lengths}, y dtype: {y.dtype}, y_lengths: {y_lengths}")
+            # print(f"ssl dtype: {ssl.dtype}, spec dtype: {spec.dtype}, spec_lengths: {spec_lengths}, text dtype: {text.dtype}, text_lengths: {text_lengths}, y dtype: {y.dtype}, y_lengths: {y_lengths}")
             assert not torch.is_complex(y_hat), f"y_hat is complex! dtype: {y_hat.dtype} : info {y_hat}"
             xm.add_step_closure( _debug_print, args=(device, f"forward done") )
             xm.mark_step()
@@ -405,7 +405,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         optim_d.zero_grad()
         scaler.scale(loss_disc).backward()
         gradients = xm._fetch_gradients(optim_d)
-        xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
+        xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xr.world_size(), pin_layout=False)
         scaler.unscale_(optim_d)
         scaler.step(optim_d)
         xm.mark_step()
@@ -463,7 +463,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         optim_g.zero_grad()
         scaler.scale(loss_gen_all).backward()
         gradients = xm._fetch_gradients(optim_g)
-        xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xm.xrt_world_size(), pin_layout=False)
+        xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xr.world_size(), pin_layout=False)
         scaler.unscale_(optim_g)
         scaler.step(optim_g)
         scaler.update()
