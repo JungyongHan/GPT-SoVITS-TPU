@@ -173,7 +173,7 @@ gcloud compute tpus tpu-vm ssh ${TPU_NAME} \
   --zone=${ZONE} \
   --project=${PROJECT_ID} \
   --worker=all \
-  --command="PJRT_DEVICE=TPU python3 ~/xla/test/test_train_mp_imagenet.py  \
+  --command="PJRT_DEVICE=TPU ~/venv/bin/python3 ~/xla/test/test_train_mp_imagenet.py --ddp  \
   --fake_data \
   --model=resnet50  \
   --num_epochs=1 2>&1 | tee ~/logs.txt"

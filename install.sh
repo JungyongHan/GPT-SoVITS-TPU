@@ -176,7 +176,7 @@ pip install --upgrade packaging
 pip install --upgrade pip setuptools wheel
 if [ "$USE_TPU" = true ]; then
     echo "Installing PyTorch/XLA for TPU support..."
-    pip install torch~=2.5.1 torchaudio==2.5.1 torch_xla[tpu]~=2.5.1 torchvision -f https://storage.googleapis.com/libtpu-releases/index.html
+    pip install torch~=2.7.0 torchaudio~=2.7.0 torch_xla[tpu]~=2.7.0 torchvision -f https://storage.googleapis.com/libtpu-releases/index.html
 elif [ "$USE_CUDA" = true ]; then
     echo "Installing PyTorch with CUDA support..."
     pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
