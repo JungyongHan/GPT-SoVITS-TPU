@@ -310,10 +310,10 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             spec, spec_lengths = spec.to(device), spec_lengths.to(device)
             y, y_lengths = y.to(device), y_lengths.to(device)
             text, text_lengths = text.to(device), text_lengths.to(device)
+            ssl = ssl.to(device)
             ssl.requires_grad = False
             xm.add_step_closure( _debug_print, args=(device, f"forward") )
             # Move ssl to device just before use inside autocast
-            ssl = ssl.to(device)
             ssl = ssl.float()
             spec = spec.float()
             text = text.long()
@@ -353,8 +353,10 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             xm.mark_step()
             # Ensure we're working with real tensors before mel spectrogram calculation
             y_hat = y_hat.float()
+            y_hat_input = y_hat.squeeze(1)
+            y_hat_input = y_hat_input.float()
             y_hat_mel = mel_spectrogram_torch(
-                y_hat.squeeze(1),
+                y_hat_input,
                 hps.data.filter_length,
                 hps.data.n_mel_channels,
                 hps.data.sampling_rate,
