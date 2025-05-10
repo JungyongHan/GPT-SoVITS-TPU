@@ -119,7 +119,6 @@ def mel_spectrogram_torch(y, n_fft, num_mels, sampling_rate, hop_size, win_size,
     y = y.squeeze(1)
 
     # TPU 호환성을 위해 return_complex=False로 설정하고 명시적으로 실수 텐서로 처리
-    # PyTorch 1.7+ 방식으로 시도
     spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window[wnsize_dtype_device],
                     center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
     print(f"spec dtype: {spec.dtype}, device: {spec.device}")
