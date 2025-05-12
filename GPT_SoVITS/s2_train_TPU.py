@@ -323,17 +323,13 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     for batch_idx, ( ssl, ssl_lengths, spec, spec_lengths, y, y_lengths, text, text_lengths, ) in enumerate(train_loader):
         xm.add_step_closure( _debug_print, args=(device, f"move_device") )
         with autocast(device=device, enabled=hps.train.fp16_run):
-            spec, spec_lengths = spec.to(device), spec_lengths.to(device)
-            y, y_lengths = y.to(device), y_lengths.to(device)
+            spec, spec_lengths = spec.to(device, torch.float32), spec_lengths.to(device)
+            y, y_lengths = y.to(device, torch.float32), y_lengths.to(device)
             text, text_lengths = text.to(device), text_lengths.to(device)
-            ssl = ssl.to(device)
+            ssl = ssl.to(device, torch.float32)
             ssl.requires_grad = False
             xm.add_step_closure( _debug_print, args=(device, f"forward") )
             # Move ssl to device just before use inside autocast
-            ssl = ssl.float()
-            spec = spec.float()
-            text = text.long()
-            y = y.float()
             xm.mark_step()
             assert not torch.is_complex(ssl), f"ssl is complex! dtype: {ssl.dtype} : info {ssl}"
             (
@@ -368,11 +364,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             # y_mel = y_mel.to(torch.float32)
             xm.mark_step()
             # Ensure we're working with real tensors before mel spectrogram calculation
-            y_hat = y_hat.float()
-            y_hat_input = y_hat.squeeze(1)
-            y_hat_input = y_hat_input.float()
             y_hat_mel = mel_spectrogram_torch(
-                y_hat_input,
+                y_hat.squeeze(1),
                 hps.data.filter_length,
                 hps.data.n_mel_channels,
                 hps.data.sampling_rate,
@@ -412,66 +405,27 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xr.world_size(), pin_layout=False)
         scaler.unscale_(optim_d)
         scaler.step(optim_d)
-        xm.mark_step()
-
         xm.add_step_closure( _debug_print, args=(device, f"backward done") )
         with autocast(device=device, enabled=hps.train.fp16_run):
             # Generator
-            y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
-            with autocast(device=device, enabled=False):
-                # 모든 텐서를 명시적으로 float32로 변환하여 일관성 유지
-                # 복소수 텐서가 있으면 실수로 변환
-                y_mel_real = y_mel
-                if torch.is_complex(y_mel_real):
-                    y_mel_real = torch.abs(y_mel_real)
-                # 항상 float32로 변환
-                y_mel_real = y_mel_real.to(torch.float32)
-                    
-                y_hat_mel_real = y_hat_mel
-                if torch.is_complex(y_hat_mel_real):
-                    y_hat_mel_real = torch.abs(y_hat_mel_real)
-                # 항상 float32로 변환
-                y_hat_mel_real = y_hat_mel_real.to(torch.float32)
-                    
-                # Now compute loss with real-valued tensors
-                loss_mel = F.l1_loss(y_mel_real, y_hat_mel_real) * hps.train.c_mel
-                
-                # KL loss 계산 전 모든 텐서를 float32로 변환
-                z_p = z_p.to(torch.float32) if z_p is not None else None
-                logs_q = logs_q.to(torch.float32) if logs_q is not None else None
-                m_p = m_p.to(torch.float32) if m_p is not None else None
-                logs_p = logs_p.to(torch.float32) if logs_p is not None else None
-                z_mask = z_mask.to(torch.float32) if z_mask is not None else None
-                
+            y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat.float())
+            xm.mark_step()
+            with autocast(enabled=False):
+                loss_mel = F.l1_loss(y_mel.float(), y_hat_mel.float()) * hps.train.c_mel
                 loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
-
-                # feature loss 계산 전 텐서 변환 - 중첩 리스트 구조 처리
-                fmap_r = [[f.to(torch.float32) for f in dr] for dr in fmap_r]
-                fmap_g = [[f.to(torch.float32) for f in dg] for dg in fmap_g]
                 loss_fm = feature_loss(fmap_r, fmap_g)
-                
-                # generator loss 계산 전 텐서 변환
-                y_d_hat_g = [g.to(torch.float32) for g in y_d_hat_g]
                 loss_gen, losses_gen = generator_loss(y_d_hat_g)
-                
-                # kl_ssl을 float32로 변환
-                if torch.is_complex(kl_ssl):
-                    kl_ssl = torch.abs(kl_ssl)
-                kl_ssl = kl_ssl.to(torch.float32)
-                
+                xm.mark_step()
                 loss_gen_all = loss_gen + loss_fm + loss_mel + kl_ssl * 1 + loss_kl
-                # 최종 손실이 float32인지 확인
-                loss_gen_all = loss_gen_all.to(torch.float32)
-
+        
         xm.add_step_closure( _debug_print, args=(device, f"loss_gen done") )
         optim_g.zero_grad()
-        scaler.scale(loss_gen_all).backward()
+        scaler.scale(loss_gen_all.float()).backward()
         gradients = xm._fetch_gradients(optim_g)
         xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xr.world_size(), pin_layout=False)
         scaler.unscale_(optim_g)
         scaler.step(optim_g)
         scaler.update()
-
         xm.add_step_closure( _debug_print, args=(device, f"backward done") )
 
         xm.add_step_closure(
