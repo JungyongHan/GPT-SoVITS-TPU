@@ -389,18 +389,16 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
             xm.mark_step()
             with autocast(device=device, enabled=False):
                 
-                loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
+                loss_disc_all, losses_disc_r, losses_disc_g = discriminator_loss(
                     y_d_hat_r,
                     y_d_hat_g,
                 )
-                loss_disc = loss_disc.float() # Convert to float32
-                assert not torch.is_complex(loss_disc), f"loss_disc is complex! dtype: {loss_disc.dtype} : info {loss_disc}"
-                loss_disc_all = loss_disc
+                assert not torch.is_complex(loss_disc_all), f"loss_disc is complex! dtype: {loss_disc_all.dtype} : info {loss_disc_all}"
                 xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
         xm.mark_step()
         xm.add_step_closure( _debug_print, args=(device, f"backward") )
         optim_d.zero_grad()
-        scaler.scale(loss_disc_all).backward()
+        scaler.scale(loss_disc_all.float()).backward()
         gradients = xm._fetch_gradients(optim_d)
         xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xr.world_size(), pin_layout=False)
         scaler.unscale_(optim_d)
@@ -435,7 +433,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         scheduler_g.step()
         scheduler_d.step()
 
-        xm.mark_step()
         if rank == 0 and writer is not None:
             if global_step % hps.train.log_interval == 0:
                 lr = optim_g.param_groups[0]["lr"]
@@ -463,7 +460,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 )
 
                 utils.summarize( writer=writer, global_step=global_step, scalars=scalar_dict, )
-                
+
                 metrics = mcu.parse_metrics_report(met.metrics_report())
                 aten_ops_sum = 0
                 for metric_name, metric_value in metrics.items():
@@ -472,6 +469,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     writer.add_scalar(metric_name, metric_value, global_step)
                     writer.add_scalar('aten_ops_sum', aten_ops_sum, global_step)
         global_step += 1   
+        xm.mark_step()
+
 
     def _save_checkpoint():
         if hps.train.if_save_latest == 0:
