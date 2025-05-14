@@ -395,12 +395,12 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                 )
                 loss_disc = loss_disc.float() # Convert to float32
                 assert not torch.is_complex(loss_disc), f"loss_disc is complex! dtype: {loss_disc.dtype} : info {loss_disc}"
-                # loss_disc_all = loss_disc
+                loss_disc_all = loss_disc
                 xm.add_step_closure( _debug_print, args=(device, f"loss_disc done") )
         xm.mark_step()
         xm.add_step_closure( _debug_print, args=(device, f"backward") )
         optim_d.zero_grad()
-        scaler.scale(loss_disc).backward()
+        scaler.scale(loss_disc_all).backward()
         gradients = xm._fetch_gradients(optim_d)
         xm.all_reduce(xm.REDUCE_SUM, gradients, scale=1.0 / xr.world_size(), pin_layout=False)
         scaler.unscale_(optim_d)
@@ -447,16 +447,11 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     )
                 )
                 logger.info([x.item() for x in losses] + [global_step, lr])
-                grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
-
-                grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
-
+                
                 scalar_dict = {
                     "loss/g/total": loss_gen_all,
                     "loss/d/total": loss_disc_all,
                     "learning_rate": lr,
-                    "grad_norm_d": grad_norm_d,
-                    "grad_norm_g": grad_norm_g,
                 }
                 scalar_dict.update(
                     {
@@ -467,31 +462,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                     }
                 )
 
-                # scalar_dict.update({"loss/g/{}".format(i): v for i, v in enumerate(losses_gen)})
-                # scalar_dict.update({"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)})
-                # scalar_dict.update({"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)})
-                image_dict = None
-                try:  ###Some people installed the wrong version of matplotlib.
-                    image_dict = {
-                        "slice/mel_org": utils.plot_spectrogram_to_numpy(
-                            y_mel[0].data.cpu().numpy(),
-                        ),
-                        "slice/mel_gen": utils.plot_spectrogram_to_numpy(
-                            y_hat_mel[0].data.cpu().numpy(),
-                        ),
-                        "all/mel": utils.plot_spectrogram_to_numpy(
-                            mel[0].data.cpu().numpy(),
-                        ),
-                        "all/stats_ssl": utils.plot_spectrogram_to_numpy(
-                            stats_ssl[0].data.cpu().numpy(),
-                        ),
-                    }
-                except:
-                    pass
-                if image_dict:
-                    utils.summarize( writer=writer, global_step=global_step, images=image_dict, scalars=scalar_dict, )
-                else:
-                    utils.summarize( writer=writer, global_step=global_step, scalars=scalar_dict, )
+                utils.summarize( writer=writer, global_step=global_step, scalars=scalar_dict, )
+                
                 metrics = mcu.parse_metrics_report(met.metrics_report())
                 aten_ops_sum = 0
                 for metric_name, metric_value in metrics.items():
